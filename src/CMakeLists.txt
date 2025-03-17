@@ -57,14 +57,14 @@ endmacro ()
 set (IPPL_BASEDIR_HDRS
     Ippl.h
     IpplVersions.h
-    IpplCore.h 
+    IpplCore.h
     )
 add_ippl_headers (${IPPL_BASEDIR_HDRS})
 add_ippl_sources (Ippl.cpp)
 
 add_subdirectory (Communicate)
 if (ENABLE_FFT)
-    set (HEFFTE_LIBRARY Heffte)
+    set (HEFFTE_LIBRARY Heffte::Heffte)
     add_subdirectory (FFT)
 else()
     set (HEFFTE_LIBRARY "")
