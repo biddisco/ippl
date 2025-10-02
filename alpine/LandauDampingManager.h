@@ -310,7 +310,14 @@ public:
         IpplTimings::startTimer(dumpDataTimer);
         dumpLandau(this->fcontainer_m->getE().getView());
         IpplTimings::stopTimer(dumpDataTimer);
-        //dumpVTK(rho_m, nr_m[0], nr_m[1], nr_m[2], iteration, hrField[0], hrField[1], hrField[2]);
+        //
+        static IpplTimings::TimerRef dumpVTKTimer = IpplTimings::getTimer("dumpVTK");
+        IpplTimings::startTimer(dumpVTKTimer);
+        std::shared_ptr<ParticleContainer_t> pc = this->pcontainer_m;
+        std::shared_ptr<FieldContainer_t> fc    = this->fcontainer_m;
+        auto gridspacing = fc->getRho().get_mesh().getMeshSpacing();
+        write_VTK_field("vtk", fc->getRho(), this->it_m);
+        IpplTimings::stopTimer(dumpVTKTimer);
     }
 
     template <typename View>
