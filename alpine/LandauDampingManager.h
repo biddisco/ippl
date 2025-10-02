@@ -13,6 +13,7 @@
 #include "Random/InverseTransformSampling.h"
 #include "Random/NormalDistribution.h"
 #include "Random/Randn.h"
+#include "Utility/vtk_dump.h"
 
 using view_type = typename ippl::detail::ViewType<ippl::Vector<double, Dim>, 1>::view_type;
 
@@ -65,8 +66,8 @@ public:
     void pre_run() override {
         Inform m("Pre Run");
 
-	const double pi = Kokkos::numbers::pi_v<T>;
-	
+        const double pi = Kokkos::numbers::pi_v<T>;
+
         if (this->solver_m == "OPEN") {
             throw IpplException("LandauDamping",
                                 "Open boundaries solver incompatible with this simulation!");
@@ -215,9 +216,11 @@ public:
 
         this->pcontainer_m->create(nlocal);
 
+        // position
         view_type* R = &(this->pcontainer_m->R.getView());
         samplingR.generate(*R, rand_pool64);
 
+        // momentum
         view_type* P = &(this->pcontainer_m->P.getView());
 
         double mu[Dim];
@@ -226,6 +229,7 @@ public:
             mu[i] = 0.0;
             sd[i] = 1.0;
         }
+        // sample initial momenta
         Kokkos::parallel_for(nlocal, ippl::random::randn<double, Dim>(*P, rand_pool64, mu, sd));
         Kokkos::fence();
         ippl::Comm->barrier();
@@ -306,6 +310,7 @@ public:
         IpplTimings::startTimer(dumpDataTimer);
         dumpLandau(this->fcontainer_m->getE().getView());
         IpplTimings::stopTimer(dumpDataTimer);
+        //dumpVTK(rho_m, nr_m[0], nr_m[1], nr_m[2], iteration, hrField[0], hrField[1], hrField[2]);
     }
 
     template <typename View>
