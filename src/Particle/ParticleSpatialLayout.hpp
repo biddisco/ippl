@@ -174,23 +174,25 @@ namespace ippl {
         int tag = Comm->next_tag(mpi::tag::P_SPATIAL_LAYOUT, mpi::tag::P_LAYOUT_CYCLE);
         std::vector<MPI_Request> send_requests(0);
         std::vector<MPI_Request> recv_requests(0);
+        std::vector<int> nRecvs;
 
         // 4b. PrePost receives for Particles ================================================== //
         static IpplTimings::TimerRef precvTimer = IpplTimings::getTimer("prePostParticleRecv");
         IpplTimings::startTimer(precvTimer);
 
-        std::ostringstream temp;
-        temp << "Particles Recv on " << std::to_string(Comm->rank()) << " ";
-        for (int i = 0; i < nRecvs_m.size(); i++)
-            temp << nRecvs_m[i] << " ";
-        temp << std::endl;
-        std::cout << temp.str();
+        // std::ostringstream temp;
+        // temp << "Particles Recv on " << std::to_string(Comm->rank()) << " ";
+        // for (int i = 0; i < nRecvs_m.size(); i++)
+        //     temp << nRecvs_m[i] << " ";
+        // temp << std::endl;
+        // std::cout << temp.str();
 
         ippl::pre_posted_buffers pre_posted_bufs;
         for (int rank = 0; rank < nRanks; ++rank) {
             if (nRecvs_m[rank] > 0) {
-                std::cout << "Here " << Comm->rank() << " tag:" << tag
-                          << " pre-post recv from rank:" << rank << std::endl;
+                // std::cout << "Here " << Comm->rank() << " tag:" << tag
+                //           << " pre-post recv from rank:" << rank << std::endl;
+                nRecvs.push_back(nRecvs_m[rank]);
                 pc.irecvFromRank(rank, tag, nRecvs_m[rank], recv_requests, pre_posted_bufs);
             }
         }
@@ -200,7 +202,7 @@ namespace ippl {
         static IpplTimings::TimerRef sendTimer = IpplTimings::getTimer("particleSend");
         IpplTimings::startTimer(sendTimer);
 
-        ippl::detail::write("RankSendCount", Comm->rank(), rankSendCount_hview);
+        // ippl::detail::write("RankSendCount", Comm->rank(), rankSendCount_hview);
         for (size_t ridx = 0; ridx < nDestinationRanks; ridx++) {
             int rank = destinationRanks_hview[ridx];
             if (rank == Comm->rank()) {
@@ -209,8 +211,9 @@ namespace ippl {
             hash_type hash("hash", rankSendCount_hview(rank));
             fillHash(rank, particleRanks, hash);
 
-            ippl::detail::write("Particles Send from " + std::to_string(Comm->rank()) + " to", rank,
-                                hash);
+            // ippl::detail::write("Particles Send from " + std::to_string(Comm->rank()) + " to",
+            // rank,
+            //                     hash);
             pc.sendToRank(rank, tag, send_requests, hash);
         }
 
@@ -237,7 +240,7 @@ namespace ippl {
         if (recv_requests.size() > 0) {
             MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
         }
-        pc.unpackRecvs(pre_posted_bufs, Comm->rank());
+        pc.unpackRecvs(pre_posted_bufs, nRecvs);
         // for (int rank = 0; rank < nRanks; ++rank) {
         //     if (nRecvs_m[rank] > 0) {
         //         std::cout << "Here " << Comm->rank() << " tag:" << tag << " pre-post recv from

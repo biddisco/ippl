@@ -330,8 +330,8 @@ namespace ippl {
             MPI_Irecv(ptr, bufSize, MPI_BYTE, rank, tag++, Comm->getCommunicator(), &request);
             requests.push_back(request);
 
-            std::cout << "irecv " << nRecvs << " buffer type "
-                      << grox::debug::print_type<decltype(buf)>(",") << std::endl;
+            // std::cout << "irecv " << nRecvs << " buffer type "
+            //           << grox::debug::print_type<decltype(buf)>(",") << std::endl;
             buf_list.template get<MemorySpace>().push_back(buf);
             // return buf;
             // buf->resetReadPos();
@@ -340,21 +340,24 @@ namespace ippl {
     }
 
     template <class PLayout, typename... IP>
-    void ParticleBase<PLayout, IP...>::unpackRecvs(ippl::pre_posted_buffers& buf_list, int onrank) {
+    void ParticleBase<PLayout, IP...>::unpackRecvs(ippl::pre_posted_buffers& buf_list,
+                                                   std::vector<int>& nRecvs) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
+            int i = 0;
             for (auto buf : buf_list.template get<MemorySpace>()) {
-                size_type one_size = packedSize<MemorySpace>(1);
-                std::cout << "unpackRecvs "
-                          << ": onrank " << Comm->rank() << ": MemorySpace "
-                          << grox::debug::print_type<MemorySpace>(",") << ": one_size " << one_size
-                          << ": estimated nRecvs " << buf->getBufferSize() / one_size << std::endl;
-                std::size_t nRecvs = buf->getBufferSize() / one_size;
+                // size_type one_size = packedSize<MemorySpace>(1);
+                // std::cout << "unpackRecvs "
+                //           << ": expected recvs " << nRecvs[i]
+                //           << ": estimated nRecvs " << buf->getBufferSize() / one_size <<
+                //           std::endl;
+                // std::size_t nRecvs = buf->getBufferSize() / one_size;
                 //
-                forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
-                    att->deserialize(*buf, nRecvs);
-                });
                 buf->resetReadPos();
-                unpack(nRecvs);
+                forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
+                    att->deserialize(*buf, nRecvs[i]);
+                });
+                unpack(nRecvs[i]);
+                i++;
             }
         });
     }

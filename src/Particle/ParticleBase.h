@@ -328,7 +328,7 @@ namespace ippl {
 
         void irecvFromRank(int rank, int tag, size_type nRecvs, std::vector<MPI_Request>& requests, pre_posted_buffers &buf_list);
 
-        void unpackRecvs(ippl::pre_posted_buffers &buf_list, int onrank);
+        void unpackRecvs(ippl::pre_posted_buffers &buf_list, std::vector<int> &nRecvs);
 
         /*!
          * Serialize to do MPI calls.
