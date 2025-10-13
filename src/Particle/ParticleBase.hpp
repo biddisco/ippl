@@ -49,6 +49,8 @@
 //   attributes: a radius rad (double), and a velocity vel (a 3D Vector).
 //
 
+#include "Utility/demangle_helper.hpp"
+
 namespace ippl {
 
     template <class PLayout, typename... IP>
@@ -277,10 +279,20 @@ namespace ippl {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             size_type bufSize = packedSize<MemorySpace>(nSends);
             if (bufSize == 0) {
+                // std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" <<
+                // rank
+                //           << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
+                //           << ": EMPTY Buffer "
+                //           << ": this " << grox::debug::print_type<decltype(this)>(",")
+                //           << std::endl;
                 return;
             }
-
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
+            // std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" << rank
+            //           << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
+            //           << ": Buffer " << grox::debug::print_type<decltype(buf)>(",")
+            //           << ": this " << grox::debug::print_type<decltype(this)>(",")
+            //           << std::endl;
 
             Comm->isend(rank, tag++, *this, *buf, requests.back(), nSends);
             buf->resetWritePos();
@@ -301,6 +313,50 @@ namespace ippl {
             buf->resetReadPos();
         });
         unpack(nRecvs);
+    }
+
+    template <class PLayout, typename... IP>
+    void ParticleBase<PLayout, IP...>::irecvFromRank(int rank, int tag, size_type nRecvs,
+                                                     std::vector<MPI_Request>& requests,
+                                                     ippl::pre_posted_buffers& buf_list) {
+        detail::runForAllSpaces([&]<typename MemorySpace>() {
+            size_type bufSize = packedSize<MemorySpace>(nRecvs);
+            if (bufSize == 0) {
+                return;
+            }
+            auto buf = Comm->getBuffer<MemorySpace>(bufSize);
+            MPI_Request request;
+            void* ptr = buf->getBuffer();
+            MPI_Irecv(ptr, bufSize, MPI_BYTE, rank, tag++, Comm->getCommunicator(), &request);
+            requests.push_back(request);
+
+            std::cout << "irecv " << nRecvs << " buffer type "
+                      << grox::debug::print_type<decltype(buf)>(",") << std::endl;
+            buf_list.template get<MemorySpace>().push_back(buf);
+            // return buf;
+            // buf->resetReadPos();
+        });
+        //     return buf; // unpack(nRecvs);
+    }
+
+    template <class PLayout, typename... IP>
+    void ParticleBase<PLayout, IP...>::unpackRecvs(ippl::pre_posted_buffers& buf_list, int onrank) {
+        detail::runForAllSpaces([&]<typename MemorySpace>() {
+            for (auto buf : buf_list.template get<MemorySpace>()) {
+                size_type one_size = packedSize<MemorySpace>(1);
+                std::cout << "unpackRecvs "
+                          << ": onrank " << Comm->rank() << ": MemorySpace "
+                          << grox::debug::print_type<MemorySpace>(",") << ": one_size " << one_size
+                          << ": estimated nRecvs " << buf->getBufferSize() / one_size << std::endl;
+                std::size_t nRecvs = buf->getBufferSize() / one_size;
+                //
+                forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
+                    att->deserialize(*buf, nRecvs);
+                });
+                buf->resetReadPos();
+                unpack(nRecvs);
+            }
+        });
     }
 
     template <class PLayout, typename... IP>

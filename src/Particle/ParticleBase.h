@@ -63,6 +63,19 @@
 
 namespace ippl {
 
+    // template <typename MemorySpace>
+    // using recv_buff_type = std::shared_ptr<ippl::detail::Archive<MemorySpace> >;
+    // using copy_buffer_type = typename detail::ContainerForAllSpaces<recv_buff_type>::type;
+
+    template <typename MemorySpace>
+    using recv_buff_type = std::shared_ptr<ippl::detail::Archive<MemorySpace>>;
+
+    template <typename MemorySpace>
+    using recv_buff_list_type = std::vector<recv_buff_type<MemorySpace>>;
+
+    using pre_posted_buffers = typename detail::ContainerForAllSpaces<recv_buff_list_type>::type;
+
+
     /*!
      * @class ParticleBaseBase
      *
@@ -312,6 +325,10 @@ namespace ippl {
          * @param nRecvs the number of particles to receive
          */
         void recvFromRank(int rank, int tag, size_type nRecvs);
+
+        void irecvFromRank(int rank, int tag, size_type nRecvs, std::vector<MPI_Request>& requests, pre_posted_buffers &buf_list);
+
+        void unpackRecvs(ippl::pre_posted_buffers &buf_list, int onrank);
 
         /*!
          * Serialize to do MPI calls.

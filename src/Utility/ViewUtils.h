@@ -99,6 +99,20 @@ namespace ippl {
                 });
         }
 
+        template <typename View>
+        void write(const std::string &title, int rank, const View &view, std::ostream& out = std::cout) {
+            auto mirror =
+                Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
+            std::ostringstream temp;
+            temp << std::endl << title << " rank " << rank << ": ";
+            temp << " [elements: " << mirror.extent(0) << "]: ";
+            for (size_t i = 0; i < mirror.extent(0); ++i) {
+                temp << mirror(i) << ", " ;
+            }
+            temp << std::endl;
+            out << temp.str();
+        }
+
         /*!
          * Utility function for shrinkView
          */

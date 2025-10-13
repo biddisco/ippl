@@ -311,13 +311,13 @@ public:
         dumpLandau(this->fcontainer_m->getE().getView());
         IpplTimings::stopTimer(dumpDataTimer);
         //
-        static IpplTimings::TimerRef dumpVTKTimer = IpplTimings::getTimer("dumpVTK");
-        IpplTimings::startTimer(dumpVTKTimer);
-        std::shared_ptr<ParticleContainer_t> pc = this->pcontainer_m;
-        std::shared_ptr<FieldContainer_t> fc    = this->fcontainer_m;
-        auto gridspacing = fc->getRho().get_mesh().getMeshSpacing();
-        write_VTK_field("vtk", fc->getRho(), this->it_m);
-        IpplTimings::stopTimer(dumpVTKTimer);
+        // static IpplTimings::TimerRef dumpVTKTimer = IpplTimings::getTimer("dumpVTK");
+        // IpplTimings::startTimer(dumpVTKTimer);
+        // std::shared_ptr<ParticleContainer_t> pc = this->pcontainer_m;
+        // std::shared_ptr<FieldContainer_t> fc    = this->fcontainer_m;
+        // auto gridspacing = fc->getRho().get_mesh().getMeshSpacing();
+        // write_VTK_field("vtk", fc->getRho(), this->it_m);
+        // IpplTimings::stopTimer(dumpVTKTimer);
     }
 
     template <typename View>
