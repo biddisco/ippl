@@ -148,7 +148,9 @@ namespace ippl {
 
         // 2. fill send buffer and send particles =============================================== //
 
+        // ----------------------------------
         // 2.1 Remote Memory Access window for one-sided communication
+        // ----------------------------------
 
         static IpplTimings::TimerRef preprocTimer = IpplTimings::getTimer("sendPreprocess");
         IpplTimings::startTimer(preprocTimer);
@@ -168,24 +170,21 @@ namespace ippl {
         }
         window_m.fence(0);
 
-        IpplTimings::stopTimer(preprocTimer);
-
-        // 4a. Setup Requests for MPI ========================================================== //
+        // ----------------------------------
+        // 4a. Setup Requests for MPI
+        // ----------------------------------
         int tag = Comm->next_tag(mpi::tag::P_SPATIAL_LAYOUT, mpi::tag::P_LAYOUT_CYCLE);
         std::vector<MPI_Request> send_requests(0);
         std::vector<MPI_Request> recv_requests(0);
         std::vector<int> nRecvs;
 
-        // 4b. PrePost receives for Particles ================================================== //
+        IpplTimings::stopTimer(preprocTimer);
+
+        // ----------------------------------
+        // 4b. PrePost receives for Particles
+        // ----------------------------------
         static IpplTimings::TimerRef precvTimer = IpplTimings::getTimer("prePostParticleRecv");
         IpplTimings::startTimer(precvTimer);
-
-        // std::ostringstream temp;
-        // temp << "Particles Recv on " << std::to_string(Comm->rank()) << " ";
-        // for (int i = 0; i < nRecvs_m.size(); i++)
-        //     temp << nRecvs_m[i] << " ";
-        // temp << std::endl;
-        // std::cout << temp.str();
 
         ippl::pre_posted_buffers pre_posted_bufs;
         for (int rank = 0; rank < nRanks; ++rank) {
@@ -198,28 +197,31 @@ namespace ippl {
         }
         IpplTimings::stopTimer(precvTimer);
 
-        // 2.2. Particle Sends ================================================================= //
+        // ----------------------------------
+        // 2.2. Particle Sends
+        // ----------------------------------
         static IpplTimings::TimerRef sendTimer = IpplTimings::getTimer("particleSend");
         IpplTimings::startTimer(sendTimer);
 
         // ippl::detail::write("RankSendCount", Comm->rank(), rankSendCount_hview);
         for (size_t ridx = 0; ridx < nDestinationRanks; ridx++) {
             int rank = destinationRanks_hview[ridx];
-            if (rank == Comm->rank()) {
+            if (rank == Comm->rank())
                 continue;
-            }
+            //
             hash_type hash("hash", rankSendCount_hview(rank));
             fillHash(rank, particleRanks, hash);
 
             // ippl::detail::write("Particles Send from " + std::to_string(Comm->rank()) + " to",
-            // rank,
-            //                     hash);
+            // rank, hash);
             pc.sendToRank(rank, tag, send_requests, hash);
         }
 
         IpplTimings::stopTimer(sendTimer);
 
-        // 3. Internal destruction of invalid particles ======================================= //
+        // ----------------------------------
+        // 3. Internal destruction of invalid particles
+        // ----------------------------------
         static IpplTimings::TimerRef destroyTimer = IpplTimings::getTimer("particleDestroy");
         IpplTimings::startTimer(destroyTimer);
 
@@ -228,34 +230,27 @@ namespace ippl {
 
         IpplTimings::stopTimer(destroyTimer);
 
-        // 4. Receive Particles ================================================================ //
-        static IpplTimings::TimerRef recvTimer = IpplTimings::getTimer("particleUnpack");
-        IpplTimings::startTimer(recvTimer);
+        // ----------------------------------
+        // 54. SendWait
+        // ----------------------------------
+        static IpplTimings::TimerRef sendWaitTimer = IpplTimings::getTimer("particleSendWait");
+        IpplTimings::startTimer(sendWaitTimer);
+        if (send_requests.size() > 0) {
+            MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
+        }
+        IpplTimings::stopTimer(sendWaitTimer);
 
-        // for (int rank = 0; rank < nRanks; ++rank) {
-        //     if (nRecvs_m[rank] > 0) {
-        //         pc.recvFromRank(rank, tag, nRecvs_m[rank]);
-        //     }
-        // }
+        // ----------------------------------
+        // 4. Unpack Received Particles
+        // ----------------------------------
+        static IpplTimings::TimerRef unpackTimer = IpplTimings::getTimer("particleUnpack");
+        IpplTimings::startTimer(unpackTimer);
+
         if (recv_requests.size() > 0) {
             MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
         }
         pc.unpackRecvs(pre_posted_bufs, nRecvs);
-        // for (int rank = 0; rank < nRanks; ++rank) {
-        //     if (nRecvs_m[rank] > 0) {
-        //         std::cout << "Here " << Comm->rank() << " tag:" << tag << " pre-post recv from
-        //         rank:" << rank
-        //                   << std::endl;
-        //     }
-        // }
-        IpplTimings::stopTimer(recvTimer);
-
-        // 54. SendWait ========================================================================= //
-        IpplTimings::startTimer(sendTimer);
-        if (send_requests.size() > 0) {
-            MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
-        }
-        IpplTimings::stopTimer(sendTimer);
+        IpplTimings::stopTimer(unpackTimer);
 
         IpplTimings::stopTimer(ParticleUpdateTimer);
     }

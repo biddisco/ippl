@@ -324,19 +324,14 @@ namespace ippl {
             if (bufSize == 0) {
                 return;
             }
+            // std::cout << "irecv " << nRecvs << " requesting buffer " << bufSize << std::endl;
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
             MPI_Request request;
             void* ptr = buf->getBuffer();
             MPI_Irecv(ptr, bufSize, MPI_BYTE, rank, tag++, Comm->getCommunicator(), &request);
             requests.push_back(request);
-
-            // std::cout << "irecv " << nRecvs << " buffer type "
-            //           << grox::debug::print_type<decltype(buf)>(",") << std::endl;
             buf_list.template get<MemorySpace>().push_back(buf);
-            // return buf;
-            // buf->resetReadPos();
         });
-        //     return buf; // unpack(nRecvs);
     }
 
     template <class PLayout, typename... IP>
@@ -356,6 +351,7 @@ namespace ippl {
                 forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
                     att->deserialize(*buf, nRecvs[i]);
                 });
+                Comm->freeBuffer(buf);
                 unpack(nRecvs[i]);
                 i++;
             }
@@ -409,5 +405,6 @@ namespace ippl {
             }
         });
         localNum_m += nrecvs;
+        // std::cout << Comm->rank() << " localNum_m " << localNum_m << std::endl;
     }
 }  // namespace ippl
