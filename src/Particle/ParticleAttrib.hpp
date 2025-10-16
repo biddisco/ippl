@@ -53,6 +53,11 @@ namespace ippl {
             Kokkos::realloc(buf_m, size * overalloc);
         }
 
+        if (Comm->rank() == 0 && dest != -1)
+            detail::print_first_n_device(
+                hash, 4,
+                "pack:Hash from parallel_for "
+                    + grox::debug::print_type<typename hash_type::memory_space>(""));
         using policy_type = Kokkos::RangePolicy<execution_space>;
         Kokkos::parallel_for(
             "ParticleAttrib::pack()", policy_type(0, size),

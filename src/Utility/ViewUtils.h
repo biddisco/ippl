@@ -112,9 +112,9 @@ namespace ippl {
             std::ostringstream temp;
             temp << std::endl << title << ": ";
             temp << " ptr " << ((mirror.extent(0) > 0) ? mirror.data() : nullptr) << ":\n";
-            temp << " [elements: " << mirror.extent(0) << "]: ";
-            temp << " [size: " << mirror.size()*sizeof(std::remove_pointer_t<typename View::traits::data_type>) << "]: ";
-            for (size_t i = 0; i < std::min(32ul, mirror.extent(0)); ++i) {
+            temp << "[elements: " << mirror.extent(0) << "] ";
+            temp << "[size:" << mirror.size()*sizeof(std::remove_pointer_t<typename View::traits::data_type>) << "]:\n";
+            for (size_t i = 0; i < std::min(8ul, mirror.extent(0)); ++i) {
                 temp << mirror(i) << ", " ;
             }
             temp << std::endl;
@@ -144,6 +144,58 @@ namespace ippl {
         decltype(auto) shrinkView(std::string label, const View& view, int nghost) {
             return shrinkView_impl(label, view, nghost, std::make_index_sequence<View::rank>{});
         }
+
+
+        // Helper struct with specializations for different types
+        template <typename T>
+        struct DevicePrinter {
+            KOKKOS_INLINE_FUNCTION
+                static void print(int i, const T& value) {
+                printf("<unsupported type>, ");
+            }
+        };
+
+        template <>
+        struct DevicePrinter<int> {
+            KOKKOS_INLINE_FUNCTION
+                static void print(int i, const int& value) {
+                printf("%d, ", value);
+            }
+        };
+
+        template <>
+        struct DevicePrinter<float> {
+            KOKKOS_INLINE_FUNCTION
+                static void print(int i, const float& value) {
+                printf("%f, ", value);
+            }
+        };
+
+        template <>
+        struct DevicePrinter<double> {
+            KOKKOS_INLINE_FUNCTION
+                static void print(int i, const double& value) {
+                printf("%lf, ", value);
+            }
+        };
+
+        // Generic device print for first N elements
+        template <typename ViewType>
+        void print_first_n_device(const ViewType& view, size_t N, const std::string& label = "") {
+            using T = typename ViewType::non_const_value_type;
+            if (!label.empty()) {
+                printf("%s: ", label.c_str());
+            }
+
+            const size_t limit = std::min(N, static_cast<size_t>(view.extent(0)));
+
+            Kokkos::parallel_for("PrintFirstN", limit, KOKKOS_LAMBDA(const int i) {
+                    DevicePrinter<T>::print(i, view(i));
+                });
+
+            Kokkos::fence();
+        }
+
     }  // namespace detail
 }  // namespace ippl
 
