@@ -99,14 +99,22 @@ namespace ippl {
                 });
         }
 
+        static std::string to_from(const std::string &prelude, int rank1, int rank2) {
+            return prelude + std::string(" # rank:")
+            + std::to_string(rank1) + "->"
+                + std::to_string(rank2) + " : ";
+        }
+
         template <typename View>
-        void write(const std::string &title, int rank, const View &view, std::ostream& out = std::cout) {
+        void write(const std::string &title, const View &view, std::ostream& out = std::cout) {
             auto mirror =
                 Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
             std::ostringstream temp;
-            temp << std::endl << title << " rank " << rank << ": ";
+            temp << std::endl << title << ": ";
+            temp << " ptr " << ((mirror.extent(0) > 0) ? mirror.data() : nullptr) << ":\n";
             temp << " [elements: " << mirror.extent(0) << "]: ";
-            for (size_t i = 0; i < mirror.extent(0); ++i) {
+            temp << " [size: " << mirror.size()*sizeof(std::remove_pointer_t<typename View::traits::data_type>) << "]: ";
+            for (size_t i = 0; i < std::min(32ul, mirror.extent(0)); ++i) {
                 temp << mirror(i) << ", " ;
             }
             temp << std::endl;

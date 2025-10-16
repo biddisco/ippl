@@ -4,6 +4,9 @@
 //
 #include <cstring>
 
+#include "Utility/ViewUtils.h"
+#include "Utility/demangle_helper.hpp"
+
 #include "Archive.h"
 
 namespace ippl {

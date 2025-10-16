@@ -20,6 +20,7 @@
 
 #include "Interpolation/CIC.h"
 #include "Particle/ParticleAttribBase.h"
+#include "Utility/demangle_helper.hpp"
 
 namespace ippl {
 
@@ -60,16 +61,22 @@ namespace ippl {
         void destroy(const hash_type& deleteIndex, const hash_type& keepIndex,
                      size_type invalidCount) override;
 
-        void pack(const hash_type&) override;
+        void pack(const hash_type&, int rank=-1) override;
 
-        void unpack(size_type) override;
+        void unpack(size_type, int rank=-1) override;
 
         void serialize(detail::Archive<memory_space>& ar, size_type nsends) override {
             ar.serialize(buf_m, nsends);
+            if (Comm->rank()==0)
+                ippl::detail::write(grox::debug::print_type<decltype(buf_m)>(",") + " - serialize:"
+                                    + std::to_string(Comm->rank()), buf_m);
         }
 
         void deserialize(detail::Archive<memory_space>& ar, size_type nrecvs) override {
             ar.deserialize(buf_m, nrecvs);
+            if (Comm->rank()==0)
+                ippl::detail::write(grox::debug::print_type<decltype(buf_m)>(",") + " - de-serialize:"
+                                    + std::to_string(Comm->rank()), buf_m);
         }
 
         virtual ~ParticleAttrib() = default;

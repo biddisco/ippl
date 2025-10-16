@@ -63,19 +63,6 @@
 
 namespace ippl {
 
-    // template <typename MemorySpace>
-    // using recv_buff_type = std::shared_ptr<ippl::detail::Archive<MemorySpace> >;
-    // using copy_buffer_type = typename detail::ContainerForAllSpaces<recv_buff_type>::type;
-
-    template <typename MemorySpace>
-    using recv_buff_type = std::shared_ptr<ippl::detail::Archive<MemorySpace>>;
-
-    template <typename MemorySpace>
-    using recv_buff_list_type = std::vector<recv_buff_type<MemorySpace>>;
-
-    using pre_posted_buffers = typename detail::ContainerForAllSpaces<recv_buff_list_type>::type;
-
-
     /*!
      * @class ParticleBaseBase
      *
@@ -326,9 +313,9 @@ namespace ippl {
          */
         void recvFromRank(int rank, int tag, size_type nRecvs);
 
-        void irecvFromRank(int rank, int tag, size_type nRecvs, std::vector<MPI_Request>& requests, pre_posted_buffers &buf_list);
+        void irecvFromRank(int rank, int tag, size_type nRecvs, std::vector<MPI_Request>& requests, mpi::comm_buffer_container &buf_list);
 
-        void unpackRecvs(ippl::pre_posted_buffers &buf_list, std::vector<int> &nRecvs);
+        void unpackRecvs(mpi::comm_buffer_container &buf_list, std::vector<int> &nRecvs);
 
         /*!
          * Serialize to do MPI calls.
@@ -359,13 +346,13 @@ namespace ippl {
          * @param buffer to send
          * @param hash function to access index.
          */
-        void pack(const hash_container_type& hash);
+        void pack(const hash_container_type& hash, int dest=-1);
 
         /*!
          * Fill my attributes.
          * @param buffer received
          */
-        void unpack(size_type nrecvs);
+        void unpack(size_type nrecvs, int src=-1);
 
     private:
         //! particle layout

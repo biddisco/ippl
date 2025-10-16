@@ -272,29 +272,37 @@ namespace ippl {
         size_type nSends = hash.size();
         requests.resize(requests.size() + 1);
 
+        if (Comm->rank() == 0)
+            detail::write(detail::to_from("sendToRank:hash  ", Comm->rank(), rank)
+                              + grox::debug::print_type<HashType>(""),
+                          hash);
+
         auto hashes = hash_container_type(hash, [&]<typename MemorySpace>() {
             return attributes_m.template get<MemorySpace>().size() > 0;
         });
-        pack(hashes);
+        pack(hashes, rank);
+
+        detail::runForAllSpaces([&]<typename MemorySpace>() {
+            auto data = hashes.template get<MemorySpace>();
+            if (data.size() > 0)
+                if (Comm->rank() == 0)
+                    detail::write(detail::to_from("sendToRank:hashes", Comm->rank(), rank)
+                                      + grox::debug::print_type<decltype(data)>(""),
+                                  data);
+        });
+
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             size_type bufSize = packedSize<MemorySpace>(nSends);
-            if (bufSize == 0) {
-                // std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" <<
-                // rank
-                //           << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
-                //           << ": EMPTY Buffer "
-                //           << ": this " << grox::debug::print_type<decltype(this)>(",")
-                //           << std::endl;
+            if (bufSize == 0)
                 return;
-            }
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
-            // std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" << rank
-            //           << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
-            //           << ": Buffer " << grox::debug::print_type<decltype(buf)>(",")
-            //           << ": this " << grox::debug::print_type<decltype(this)>(",")
-            //           << std::endl;
+            std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" << rank
+                      << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
+                      << ": Buffer " << grox::debug::print_type<decltype(buf)>(",") << ": this "
+                      << grox::debug::print_type<decltype(this)>(",") << std::endl;
 
-            Comm->isend(rank, tag++, *this, *buf, requests.back(), nSends);
+            Comm->isend(rank, tag++, *this, *buf, requests.back(), nSends, Comm->rank() == 0,
+                        detail::to_from("sendToRank:isend ", Comm->rank(), rank));
             buf->resetWritePos();
         });
     }
@@ -318,35 +326,26 @@ namespace ippl {
     template <class PLayout, typename... IP>
     void ParticleBase<PLayout, IP...>::irecvFromRank(int rank, int tag, size_type nRecvs,
                                                      std::vector<MPI_Request>& requests,
-                                                     ippl::pre_posted_buffers& buf_list) {
+                                                     mpi::comm_buffer_container& buf_list) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             size_type bufSize = packedSize<MemorySpace>(nRecvs);
             if (bufSize == 0) {
                 return;
             }
             // std::cout << "irecv " << nRecvs << " requesting buffer " << bufSize << std::endl;
+            requests.resize(requests.size() + 1);
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
-            MPI_Request request;
-            void* ptr = buf->getBuffer();
-            MPI_Irecv(ptr, bufSize, MPI_BYTE, rank, tag++, Comm->getCommunicator(), &request);
-            requests.push_back(request);
+            Comm->irecv(rank, tag++, *buf, requests.back(), bufSize);
             buf_list.template get<MemorySpace>().push_back(buf);
         });
     }
 
     template <class PLayout, typename... IP>
-    void ParticleBase<PLayout, IP...>::unpackRecvs(ippl::pre_posted_buffers& buf_list,
+    void ParticleBase<PLayout, IP...>::unpackRecvs(mpi::comm_buffer_container& buf_list,
                                                    std::vector<int>& nRecvs) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             int i = 0;
             for (auto buf : buf_list.template get<MemorySpace>()) {
-                // size_type one_size = packedSize<MemorySpace>(1);
-                // std::cout << "unpackRecvs "
-                //           << ": expected recvs " << nRecvs[i]
-                //           << ": estimated nRecvs " << buf->getBufferSize() / one_size <<
-                //           std::endl;
-                // std::size_t nRecvs = buf->getBufferSize() / one_size;
-                //
                 buf->resetReadPos();
                 forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
                     att->deserialize(*buf, nRecvs[i]);
@@ -364,6 +363,8 @@ namespace ippl {
         using memory_space = typename Archive::buffer_type::memory_space;
         forAllAttributes<memory_space>([&]<typename Attribute>(Attribute& att) {
             att->serialize(ar, nsends);
+            ippl::detail::write(
+                grox::debug::print_type<decltype(ar.buffer_m)>(",") + " - serialize:", ar.buffer_m);
         });
     }
 
@@ -387,21 +388,21 @@ namespace ippl {
     }
 
     template <class PLayout, typename... IP>
-    void ParticleBase<PLayout, IP...>::pack(const hash_container_type& hash) {
+    void ParticleBase<PLayout, IP...>::pack(const hash_container_type& hash, int dest) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             auto& att = attributes_m.template get<MemorySpace>();
             for (unsigned j = 0; j < att.size(); j++) {
-                att[j]->pack(hash.template get<MemorySpace>());
+                att[j]->pack(hash.template get<MemorySpace>(), dest);
             }
         });
     }
 
     template <class PLayout, typename... IP>
-    void ParticleBase<PLayout, IP...>::unpack(size_type nrecvs) {
+    void ParticleBase<PLayout, IP...>::unpack(size_type nrecvs, int src) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             auto& att = attributes_m.template get<MemorySpace>();
             for (unsigned j = 0; j < att.size(); j++) {
-                att[j]->unpack(nrecvs);
+                att[j]->unpack(nrecvs, src);
             }
         });
         localNum_m += nrecvs;

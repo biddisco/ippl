@@ -91,7 +91,7 @@ namespace ippl {
 
             ~Archive() = default;
 
-        private:
+        public:
             //! write position for serialization
             size_type writepos_m;
             //! read position for deserialization

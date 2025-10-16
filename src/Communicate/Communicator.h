@@ -175,12 +175,15 @@ namespace ippl {
 
             template <class Buffer, typename Archive>
             void isend(int dest, int tag, Buffer& buffer, Archive& ar, MPI_Request& request,
-                       size_type nsends) {
+                       size_type nsends, bool debug=false, const std::string &title="") {
                 if (ar.getSize() > INT_MAX) {
                     std::cerr << "Message size exceeds range of int" << std::endl;
                     this->abort();
                 }
+                if (debug)
+                    ippl::detail::write(title + grox::debug::print_type<Archive>(""), ar.buffer_m);
                 buffer.serialize(ar, nsends);
+                // ippl::detail::write(grox::debug::print_type<Buffer>(",") + " - sendToRank:isend rank:" + std::to_string(rank()) + " to:", dest, buffer.buffer_m);
                 MPI_Isend(ar.getBuffer(), ar.getSize(), MPI_BYTE, dest, tag, *comm_m, &request);
             }
 
