@@ -274,36 +274,112 @@ namespace ippl {
 
         if (Comm->rank() == 0)
             detail::write(detail::to_from("sendToRank:hash  ", Comm->rank(), rank)
-                              + grox::debug::print_type<HashType>(""),
+                              + grox::debug::print_type<HashType>(),
                           hash);
 
+        // make sure the array of indices is present on the right memory space
         auto hashes = hash_container_type(hash, [&]<typename MemorySpace>() {
             return attributes_m.template get<MemorySpace>().size() > 0;
         });
-        pack(hashes, rank);
 
-        detail::runForAllSpaces([&]<typename MemorySpace>() {
-            auto data = hashes.template get<MemorySpace>();
-            if (data.size() > 0)
-                if (Comm->rank() == 0)
-                    detail::write(detail::to_from("sendToRank:hashes", Comm->rank(), rank)
-                                      + grox::debug::print_type<decltype(data)>(""),
-                                  data);
-        });
+        // pack the particle attributes in each space into "ParticleAttrib::buf_m"
+        pack(hashes, rank);
 
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             size_type bufSize = packedSize<MemorySpace>(nSends);
             if (bufSize == 0)
                 return;
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
+            // if (Comm->rank() == 0 /*&& rank != -1*/)
+            //     detail::print_first_n_device(buf->, 8,"sendToRank:pack:com_buf  ");
+
             std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" << rank
                       << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
                       << ": Buffer " << grox::debug::print_type<decltype(buf)>(",") << ": this "
                       << grox::debug::print_type<decltype(this)>(",") << std::endl;
 
-            Comm->isend(rank, tag++, *this, *buf, requests.back(), nSends, Comm->rank() == 0,
-                        detail::to_from("sendToRank:isend ", Comm->rank(), rank));
+            //
+            serialize(*buf, nSends);
+            if (Comm->rank() == 0)
+                detail::print_first_n_device(buf->buffer_m, 8, "sendToRank::archive::buffer_m");
+            // ippl::detail::write(title + grox::debug::print_type<Archive>(), ar.buffer_m);
+            // ippl::detail::write(grox::debug::print_type<Buffer>(",") + " - sendToRank:isend
+            // rank:" + std::to_string(rank()) + " to:", dest, buffer.buffer_m);
+
+            Comm->isend(rank, tag++, *this, *buf, requests.back(), nSends, false);
             buf->resetWritePos();
+        });
+    }
+
+    template <class PLayout, typename... IP>
+    template <typename HashType>
+    void ParticleBase<PLayout, IP...>::packSerialize(int rank, const HashType& hash,
+                                                     mpi::comm_buffer_container& buf_list) {
+        size_type nSends = hash.size();
+
+        if (Comm->rank() == 0)
+            detail::write(detail::to_from("packSerialize:hash  ", Comm->rank(), rank)
+                              + grox::debug::print_type<HashType>(),
+                          hash);
+
+        // make sure the array of indices is present on the right memory space
+        auto hashes = hash_container_type(hash, [&]<typename MemorySpace>() {
+            return attributes_m.template get<MemorySpace>().size() > 0;
+        });
+
+        // pack the particle attributes in each space into "ParticleAttrib::buf_m"
+        pack(hashes, rank);
+
+        detail::runForAllSpaces([&]<typename MemorySpace>() {
+            size_type bufSize = packedSize<MemorySpace>(nSends);
+            if (bufSize == 0)
+                return;
+            auto buf = Comm->getBuffer<MemorySpace>(bufSize);
+
+            std::cout << "Here " << Comm->rank() << " send to rank:" << rank << ": MemorySpace "
+                      << grox::debug::print_type<MemorySpace>(",") << ": Buffer "
+                      << grox::debug::print_type<decltype(buf)>(",") << ": this "
+                      << "buffer size " << buf->buffer_m.size() << " "
+                      << grox::debug::print_type<decltype(this)>(",") << std::endl;
+
+            serialize(*buf, nSends);
+            if (Comm->rank() == 0)
+                detail::print_first_n_device(buf->buffer_m, 8, "sendToRank::archive::buffer_m");
+            buf_list.template get<MemorySpace>().push_back(buf);
+        });
+    }
+
+    template <class PLayout, typename... IP>
+    void ParticleBase<PLayout, IP...>::sendToRankBuffer(int rank, int tag,
+                                                        std::vector<MPI_Request>& requests,
+                                                        mpi::comm_buffer_container& buf_list) {
+        requests.resize(requests.size() + 1);
+
+        detail::runForAllSpaces([&]<typename MemorySpace>() {
+            auto buffers = buf_list.template get<MemorySpace>();
+
+            for (const auto& buf : buffers) {
+                //
+                std::cout << "Here " << Comm->rank() << " tag:" << tag << " send to rank:" << rank
+                          << ": MemorySpace " << grox::debug::print_type<MemorySpace>(",")
+                          << ": Buffer " << grox::debug::print_type<decltype(buf)>(",") << ": this "
+                          << grox::debug::print_type<decltype(this)>(",") << std::endl;
+
+                if (Comm->rank() == 0)
+                    detail::print_first_n_device(buf->buffer_m, 8, "sendToRank::archive::buffer_m");
+                // ippl::detail::write(title + grox::debug::print_type<Archive>(), ar.buffer_m);
+                // ippl::detail::write(grox::debug::print_type<Buffer>(",") + " - sendToRank:isend
+                // rank:" + std::to_string(rank()) + " to:", dest, buffer.buffer_m);
+
+                if (rank == 0 /*Comm->rank() == 0*/) {
+                    detail::print_first_n_device(buf->buffer_m, 8,
+                                                 "sendToRankBuffer::archive::buffer_m");
+                    std::cout << "\ni-SEND " << "rank " << Comm->rank() << "-" << rank << " tag "
+                              << tag << " " << buf->buffer_m.size() << std::endl;
+                }
+                Comm->isend(rank, tag++, *this, *buf, requests.back(), buf->buffer_m.size(), false);
+                buf->resetWritePos();
+            }
         });
     }
 
@@ -335,6 +411,8 @@ namespace ippl {
             // std::cout << "irecv " << nRecvs << " requesting buffer " << bufSize << std::endl;
             requests.resize(requests.size() + 1);
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
+            std::cout << "\ni-RECV " << "rank " << Comm->rank() << "-" << rank << " tag " << tag
+                      << " " << bufSize << " " << buf->buffer_m.size() << std::endl;
             Comm->irecv(rank, tag++, *buf, requests.back(), bufSize);
             buf_list.template get<MemorySpace>().push_back(buf);
         });
@@ -363,8 +441,6 @@ namespace ippl {
         using memory_space = typename Archive::buffer_type::memory_space;
         forAllAttributes<memory_space>([&]<typename Attribute>(Attribute& att) {
             att->serialize(ar, nsends);
-            ippl::detail::write(
-                grox::debug::print_type<decltype(ar.buffer_m)>(",") + " - serialize:", ar.buffer_m);
         });
     }
 

@@ -54,20 +54,20 @@ namespace ippl {
         }
 
         if (Comm->rank() == 0 && dest != -1)
-            detail::print_first_n_device(
-                hash, 4,
-                "pack:Hash from parallel_for "
-                    + grox::debug::print_type<typename hash_type::memory_space>(""));
+            detail::print_first_n_device(hash, 8, "sendToRank:pack:Hash  ");
+
         using policy_type = Kokkos::RangePolicy<execution_space>;
         Kokkos::parallel_for(
             "ParticleAttrib::pack()", policy_type(0, size),
             KOKKOS_CLASS_LAMBDA(const size_t i) { buf_m(i) = dview_m(hash(i)); });
         Kokkos::fence();
-        // std::cout << "pack::fence : size " << size << std::endl;
-        if (Comm->rank() == 0 && dest != -1)
+
+        if (Comm->rank() == 0 && dest != -1) {
             detail::write(detail::to_from("sendToRank:pack  ", Comm->rank(), dest)
-                              + grox::debug::print_type<decltype(buf_m)>(""),
+                              + grox::debug::print_type<decltype(buf_m)>(),
                           buf_m);
+            detail::print_first_n_device(buf_m, 8, "sendToRank:pack:buf_m  ");
+        }
     }
 
     template <typename T, class... Properties>
@@ -87,7 +87,7 @@ namespace ippl {
         Kokkos::fence();
         if (Comm->rank() == 0)
             detail::write(detail::to_from("sendToRank:unpack", Comm->rank(), dest)
-                              + grox::debug::print_type<decltype(buf_m)>(""),
+                              + grox::debug::print_type<decltype(buf_m)>(),
                           buf_m);
     }
 

@@ -67,15 +67,12 @@ namespace ippl {
 
         void serialize(detail::Archive<memory_space>& ar, size_type nsends) override {
             ar.serialize(buf_m, nsends);
-            if (Comm->rank()==0)
-                ippl::detail::write(grox::debug::print_type<decltype(buf_m)>(",") + " - serialize:"
-                                    + std::to_string(Comm->rank()), buf_m);
         }
 
         void deserialize(detail::Archive<memory_space>& ar, size_type nrecvs) override {
             ar.deserialize(buf_m, nrecvs);
             if (Comm->rank()==0)
-                ippl::detail::write(grox::debug::print_type<decltype(buf_m)>(",") + " - de-serialize:"
+                ippl::detail::write(grox::debug::print_type<decltype(buf_m)>() + " - de-serialize:"
                                     + std::to_string(Comm->rank()), buf_m);
         }
 

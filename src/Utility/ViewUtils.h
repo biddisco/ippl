@@ -9,6 +9,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "Types/ViewTypes.h"
+#include "Utility/demangle_helper.hpp"
 
 namespace ippl {
     namespace detail {
@@ -111,13 +112,15 @@ namespace ippl {
                 Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
             std::ostringstream temp;
             temp << std::endl << title << ": ";
-            temp << " ptr " << ((mirror.extent(0) > 0) ? mirror.data() : nullptr) << ":\n";
-            temp << "[elements: " << mirror.extent(0) << "] ";
-            temp << "[size:" << mirror.size()*sizeof(std::remove_pointer_t<typename View::traits::data_type>) << "]:\n";
+            temp << "[ptr: " << ((mirror.extent(0) > 0) ? mirror.data() : nullptr) << "] ";
+            temp << "[size: " << mirror.size() << "] ";
+            temp << "[capacity: " << mirror.extent(0) << "] ";
+            temp << "[space:" << mirror.size()*sizeof(std::remove_pointer_t<typename View::traits::data_type>) << "] ";
+            temp << "[memory_space: " << grox::debug::print_type<typename View::memory_space>() << "]:\n";
             for (size_t i = 0; i < std::min(8ul, mirror.extent(0)); ++i) {
                 temp << mirror(i) << ", " ;
             }
-            temp << std::endl;
+            temp << "\n" << std::endl;
             out << temp.str();
         }
 
@@ -150,15 +153,31 @@ namespace ippl {
         template <typename T>
         struct DevicePrinter {
             KOKKOS_INLINE_FUNCTION
-                static void print(int i, const T& value) {
+                static void print(const T& value) {
                 printf("<unsupported type>, ");
+            }
+        };
+
+        template <>
+        struct DevicePrinter<ippl::Vector<double, 3u>> {
+            KOKKOS_INLINE_FUNCTION
+                static void print(const ippl::Vector<double, 3u>& value) {
+                printf("(%lf, %lf, %lf), ", value[0], value[1], value[2]);
+            }
+        };
+
+        template <>
+        struct DevicePrinter<ippl::Vector<float, 3u>> {
+            KOKKOS_INLINE_FUNCTION
+                static void print(const ippl::Vector<float, 3u>& value) {
+                printf("(%f, %f, %f), ", value[0], value[1], value[2]);
             }
         };
 
         template <>
         struct DevicePrinter<int> {
             KOKKOS_INLINE_FUNCTION
-                static void print(int i, const int& value) {
+                static void print(const int& value) {
                 printf("%d, ", value);
             }
         };
@@ -166,7 +185,7 @@ namespace ippl {
         template <>
         struct DevicePrinter<float> {
             KOKKOS_INLINE_FUNCTION
-                static void print(int i, const float& value) {
+                static void print(const float& value) {
                 printf("%f, ", value);
             }
         };
@@ -174,7 +193,7 @@ namespace ippl {
         template <>
         struct DevicePrinter<double> {
             KOKKOS_INLINE_FUNCTION
-                static void print(int i, const double& value) {
+                static void print(const double& value) {
                 printf("%lf, ", value);
             }
         };
@@ -183,16 +202,22 @@ namespace ippl {
         template <typename ViewType>
         void print_first_n_device(const ViewType& view, size_t N, const std::string& label = "") {
             using T = typename ViewType::non_const_value_type;
-            if (!label.empty()) {
-                printf("%s: ", label.c_str());
-            }
+            std::string space = grox::debug::print_type<typename ViewType::memory_space>();
+            std::string dtype = grox::debug::print_type<T>();
+            printf("%s: ", label.c_str());
+            printf("[type: %s] ", dtype.c_str());
+            printf("[ptr: %p] ", ((view.size() > 0) ? view.data() : nullptr));
+            printf("[size: %lu] ", view.size());
+            printf("[capacity: %lu] ", view.extent(0));
+            printf("[space: %lu] ", view.size()*sizeof(T));
+            printf("[memory_space: %s] ", space.c_str());
 
             const size_t limit = std::min(N, static_cast<size_t>(view.extent(0)));
-
             Kokkos::parallel_for("PrintFirstN", limit, KOKKOS_LAMBDA(const int i) {
-                    DevicePrinter<T>::print(i, view(i));
-                });
+                DevicePrinter<T>::print(view(i));
+            });
 
+            printf("\n");
             Kokkos::fence();
         }
 

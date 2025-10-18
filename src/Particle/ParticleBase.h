@@ -304,6 +304,12 @@ namespace ippl {
         void sendToRank(int rank, int tag, std::vector<MPI_Request>& requests,
                         const HashType& hash);
 
+
+        template <typename HashType>
+        void packSerialize(int rank, const HashType& hash, mpi::comm_buffer_container& buf_list);
+
+        void sendToRankBuffer(int rank, int tag, std::vector<MPI_Request>& requests, mpi::comm_buffer_container& buf_list);
+
         /*!
          * Receives particles from another rank
          * @param rank the source rank

@@ -187,6 +187,7 @@ namespace ippl {
         IpplTimings::startTimer(precvTimer);
 
         mpi::comm_buffer_container pre_posted_bufs;
+        // int rtag = tag;
         for (int rank = 0; rank < nRanks; ++rank) {
             if (nRecvs_m[rank] > 0) {
                 std::cout << "Here " << Comm->rank() << " tag:" << tag
@@ -198,26 +199,53 @@ namespace ippl {
         }
         IpplTimings::stopTimer(precvTimer);
 
+// #define IPPL_ORIGINAL_SEND_RECV_VERSION
+#ifdef IPPL_ORIGINAL_SEND_RECV_VERSION
+
+        // ----------------------------------
+        // 2.2 Particle Sends
+        // ----------------------------------
+
+        static IpplTimings::TimerRef sendTimer = IpplTimings::getTimer("particleSend");
+        IpplTimings::startTimer(sendTimer);
+
+        std::vector<MPI_Request> requests(0);
+
+        for (size_t ridx = 0; ridx < nDestinationRanks; ridx++) {
+            int rank = destinationRanks_hview[ridx];
+            if (rank == Comm->rank()) {
+                continue;
+            }
+            hash_type hash("hash", rankSendCount_hview(rank));
+            fillHash(rank, particleRanks, hash);
+            pc.sendToRank(rank, tag, requests, hash);
+        }
+
+        IpplTimings::stopTimer(sendTimer);
+#else
+
         // ----------------------------------
         // 2.2. Particle Send packing
         // ----------------------------------
-        // static IpplTimings::TimerRef sendPackTimer = IpplTimings::getTimer("particleSendPack");
-        // IpplTimings::startTimer(sendPackTimer);
-        // mpi::comm_buffer_container send_bufs;
-        // // ippl::detail::write("RankSendCount", Comm->rank(), rankSendCount_hview);
-        // for (size_t ridx = 0; ridx < nDestinationRanks; ridx++) {
-        //     int rank = destinationRanks_hview[ridx];
-        //     if (rank == Comm->rank())
-        //         continue;
-        //     //
-        //     hash_type hash("hash", rankSendCount_hview(rank));
-        //     fillHash(rank, particleRanks, hash);
+        static IpplTimings::TimerRef sendPackTimer = IpplTimings::getTimer("particleSendPack");
+        IpplTimings::startTimer(sendPackTimer);
+        std::vector<mpi::comm_buffer_container> send_bufs(nDestinationRanks);
 
-        //             // ippl::detail::write("Particles Send from " + std::to_string(Comm->rank())
-        //             + " to", rank, hash);
-        //     pc.sendToRank(rank, tag, send_requests, hash);
-        // }
-        // IpplTimings::stopTimer(sendPackTimer);
+        // ippl::detail::write("RankSendCount", Comm->rank(), rankSendCount_hview);
+        for (size_t ridx = 0; ridx < nDestinationRanks; ridx++) {
+            int rank = destinationRanks_hview[ridx];
+            if (rank == Comm->rank())
+                continue;
+            //
+            hash_type hash("hash", rankSendCount_hview(rank));
+            fillHash(rank, particleRanks, hash);
+
+            // ippl::detail::write("Particles Send from " + std::to_string(Comm->rank()) + " to",
+            // rank, hash);
+            pc.packSerialize(rank, hash, send_bufs[ridx]);
+        }
+
+        IpplTimings::stopTimer(sendPackTimer);
 
         // ----------------------------------
         // 2.2. Particle Sends
@@ -231,15 +259,11 @@ namespace ippl {
             if (rank == Comm->rank())
                 continue;
             //
-            hash_type hash("hash", rankSendCount_hview(rank));
-            fillHash(rank, particleRanks, hash);
-
-            // ippl::detail::write("Particles Send from " + std::to_string(Comm->rank()) + " to",
-            // rank, hash);
-            pc.sendToRank(rank, tag, send_requests, hash);
+            pc.sendToRankBuffer(rank, tag, send_requests, send_bufs[ridx]);
         }
 
         IpplTimings::stopTimer(sendTimer);
+#endif
 
         // ----------------------------------
         // 3. Internal destruction of invalid particles
