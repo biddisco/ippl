@@ -190,9 +190,9 @@ namespace ippl {
         // int rtag = tag;
         for (int rank = 0; rank < nRanks; ++rank) {
             if (nRecvs_m[rank] > 0) {
-                std::cout << "Here " << Comm->rank() << " tag:" << tag
-                          << " pre-post recv from rank:" << rank << " : " << nRecvs_m[rank]
-                          << std::endl;
+                // std::cout << "Here " << Comm->rank() << " tag:" << tag
+                //           << " pre-post recv from rank:" << rank << " : " << nRecvs_m[rank]
+                //           << std::endl;
                 nRecvs.push_back(nRecvs_m[rank]);
                 pc.irecvFromRank(rank, tag, nRecvs_m[rank], recv_requests, pre_posted_bufs);
             }

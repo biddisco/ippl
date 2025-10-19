@@ -71,9 +71,9 @@ namespace ippl {
 
         void deserialize(detail::Archive<memory_space>& ar, size_type nrecvs) override {
             ar.deserialize(buf_m, nrecvs);
-            if (Comm->rank()==0)
-                ippl::detail::write(grox::debug::print_type<decltype(buf_m)>() + " - de-serialize:"
-                                    + std::to_string(Comm->rank()), buf_m);
+            // if (Comm->rank()==0)
+            //     ippl::detail::write(grox::debug::print_type<decltype(buf_m)>() + " - de-serialize:"
+            //                         + std::to_string(Comm->rank()), buf_m);
         }
 
         virtual ~ParticleAttrib() = default;
