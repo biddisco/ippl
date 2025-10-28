@@ -64,10 +64,10 @@ public:
             origin[d] = 0;
         }
 
-        layout      = flayout_type(MPI_COMM_WORLD, owned, isParallel);
-        mesh        = mesh_type(owned, hx, origin);
-        playout_ptr = std::make_shared<playout_type>(layout, mesh);
-        bunch       = std::make_shared<bunch_type>(*playout_ptr);
+        layout  = flayout_type(MPI_COMM_WORLD, owned, isParallel);
+        mesh    = mesh_type(owned, hx, origin);
+        playout = new playout_type(layout, mesh);
+        bunch   = std::make_shared<bunch_type>(*playout);
 
         using BC = ippl::BC;
 
@@ -108,7 +108,7 @@ public:
         using size_type    = typename RegionLayout_t::view_type::size_type;
         using mdrange_type = Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>;
 
-        RegionLayout_t RLayout           = playout_ptr->getRegionLayout();
+        RegionLayout_t RLayout           = playout->getRegionLayout();
         auto& positions                  = bunch->R.getView();
         region_view Regions              = RLayout.getdLocalRegions();
         typename rank_type::view_type ER = bunch->expectedRank.getView();
@@ -132,16 +132,23 @@ public:
     const unsigned int nParticles = 128;
     std::array<size_t, Dim> nPoints;
     std::array<T, Dim> domain;
-    std::shared_ptr<playout_type> playout_ptr;
+    playout_type* playout;
 
     flayout_type layout;
     mesh_type mesh;
 };
 
 using Tests = TestParams::tests<1, 2, 3, 4, 5, 6>;
-TYPED_TEST_SUITE(ParticleSendRecv, Tests);
+TYPED_TEST_CASE(ParticleSendRecv, Tests);
 
 TYPED_TEST(ParticleSendRecv, SendAndRecieve) {
+    if (ippl::Comm->rank() == 0) {
+        std::cout << "Please attach debugger and hit return" << std::endl;
+        char c;
+        std::cin >> c;
+    }
+    ippl::Comm->barrier();
+
     const auto nParticles = this->nParticles;
     auto& bunch           = this->bunch;
 
