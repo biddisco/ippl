@@ -49,6 +49,7 @@ option(IPPL_USE_ALTERNATIVE_VARIANT
 option(IPPL_USE_STANDARD_FOLDERS "Put all generated binaries in bin/lib folders" OFF)
 option(IPPL_SKIP_FAILING_TESTS "Do not build/test tests that are currently marked as failing" OFF)
 option(IPPL_ENABLE_SCRIPTS "Generate job script templates for some benchmarks/tests" OFF)
+option(IPPL_GPU_AWARE_MPI "Allow MPI to/from from device memory buffers" OFF)
 
 # "Build IPPL as a shared library (ON) or static library (OFF)" OFF) if(IPPL_DYL)
 # set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE) message(WARNING "IPPL_DYL is deprecated; use

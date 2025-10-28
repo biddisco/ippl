@@ -47,6 +47,10 @@ target_compile_options(
          $<$<CONFIG:Release>:-O3>
          >)
 
+if("CUDA" IN_LIST IPPL_PLATFORMS)
+  target_compile_options(ippl PUBLIC --expt-relaxed-constexpr)
+endif()
+
 get_target_property(_ippl_type ippl TYPE)
 if(_ippl_type)
   string(REPLACE "_LIBRARY" "" _ippl_type "${_ippl_type}") # -> STATIC / SHARED / OBJECT / INTERFACE
