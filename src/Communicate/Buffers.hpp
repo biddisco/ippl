@@ -23,6 +23,15 @@
 namespace ippl {
     namespace mpi {
 
+        template <typename MemorySpace>
+        using comm_buff_type = std::shared_ptr<ippl::detail::Archive<MemorySpace>>;
+
+        template <typename MemorySpace>
+        using comm_buff_list_type = std::vector<comm_buff_type<MemorySpace>>;
+
+        using comm_buffer_container =
+            typename detail::ContainerForAllSpaces<comm_buff_list_type>::type;
+
         template <typename MemorySpace, typename T>
         Communicator::buffer_type<MemorySpace> Communicator::getBuffer(size_type size,
                                                                        double overallocation) {
