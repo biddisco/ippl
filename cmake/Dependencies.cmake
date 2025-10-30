@@ -45,6 +45,12 @@ if("OPENMP" IN_LIST IPPL_PLATFORMS)
 endif()
 
 # ------------------------------------------------------------------------------
+# Boost
+# ------------------------------------------------------------------------------
+find_package(Boost REQUIRED)
+colour_message(STATUS ${Green} "✅ Boost found ${Boost_VERSION}")
+
+# ------------------------------------------------------------------------------
 # Utility function to clear a list of vars one by one
 # ------------------------------------------------------------------------------
 function(unset_vars)
@@ -242,13 +248,13 @@ if(IPPL_ENABLE_FFT)
 
   if(Heffte_FOUND)
     colour_message(STATUS ${Green} "✅ Heffte ${Heffte_VERSION} found externally")
+    # dump_cmake_variables()
     set(HEFFTE_OK TRUE)
     # if we want cuda, but the installed heffte isn't using cuda
     if("CUDA" IN_LIST IPPL_PLATFORMS AND NOT Heffte_CUDA_FOUND)
       set(HEFFTE_OK FALSE)
       set(heffte_error "CUDA support requested, but installed Heffte does not use cuda")
     endif()
-
     # if we want do not want cuda, but the installed heffte is using  using cuda
     if((NOT "CUDA" IN_LIST IPPL_PLATFORMS) AND Heffte_CUDA_FOUND)
       set(HEFFTE_OK FALSE)
