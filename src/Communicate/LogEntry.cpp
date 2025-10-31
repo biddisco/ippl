@@ -23,6 +23,8 @@ namespace ippl {
         serializeString(buffer, methodName);
         serializeBasicType(buffer, usedSize);
         serializeBasicType(buffer, freeSize);
+        serializeBasicType(buffer, usedN);
+        serializeBasicType(buffer, freeN);
         serializeString(buffer, memorySpace);
         serializeBasicType(buffer, rank);
 
@@ -47,6 +49,8 @@ namespace ippl {
         entry.methodName  = deserializeString(buffer, current_pos);
         entry.usedSize    = deserializeBasicType<size_t>(buffer, current_pos);
         entry.freeSize    = deserializeBasicType<size_t>(buffer, current_pos);
+        entry.usedN       = deserializeBasicType<int>(buffer, current_pos);
+        entry.freeN       = deserializeBasicType<int>(buffer, current_pos);
         entry.memorySpace = deserializeString(buffer, current_pos);
         entry.rank        = deserializeBasicType<int>(buffer, current_pos);
 

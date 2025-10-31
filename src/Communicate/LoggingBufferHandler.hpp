@@ -58,6 +58,16 @@ namespace ippl {
     }
 
     template <typename MemorySpace>
+    int LoggingBufferHandler<MemorySpace>::getUsedN() const {
+        return handler_m->getUsedN();
+    }
+
+    template <typename MemorySpace>
+    int LoggingBufferHandler<MemorySpace>::getFreeN() const {
+        return handler_m->getFreeN();
+    }
+
+    template <typename MemorySpace>
     const std::vector<LogEntry>& LoggingBufferHandler<MemorySpace>::getLogs() const {
         return logEntries_m;
     }
@@ -65,9 +75,19 @@ namespace ippl {
     template <typename MemorySpace>
     void LoggingBufferHandler<MemorySpace>::logMethod(
         const std::string& methodName, const std::map<std::string, std::string>& parameters) {
+        auto t = std::chrono::high_resolution_clock::now();
+
+        std::stringstream temp;
+        temp << t.time_since_epoch().count() << "\t" << methodName << "\t"
+             << handler_m->getUsedSize() << "\t" << handler_m->getFreeSize() << "\t"
+             << handler_m->getUsedN() << "\t" << handler_m->getFreeN() << "\t"
+             << MemorySpace::name() << "\t" << rank_m << std::endl;
+        ;
+        std::cout << temp.str();
+
         logEntries_m.push_back({methodName, parameters, handler_m->getUsedSize(),
-                                handler_m->getFreeSize(), MemorySpace::name(), rank_m,
-                                std::chrono::high_resolution_clock::now()});
+                                handler_m->getFreeSize(), handler_m->getUsedN(),
+                                handler_m->getFreeN(), MemorySpace::name(), rank_m, t});
     }
 
 }  // namespace ippl

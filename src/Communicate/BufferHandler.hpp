@@ -55,6 +55,16 @@ namespace ippl {
     }
 
     template <typename MemorySpace>
+    int DefaultBufferHandler<MemorySpace>::getUsedN() const {
+        return used_buffers.size();
+    }
+
+    template <typename MemorySpace>
+    int DefaultBufferHandler<MemorySpace>::getFreeN() const {
+        return free_buffers.size();
+    }
+
+    template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::size_type
     DefaultBufferHandler<MemorySpace>::getFreeSize() const {
         return freeSize_m;

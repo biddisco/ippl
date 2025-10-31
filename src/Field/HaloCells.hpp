@@ -176,6 +176,14 @@ namespace ippl {
                 for (auto& bc_data : pre_posted_bufs) {
                     haloData_m.deserialize(*bc_data.pre_posted_recv_buf, bc_data.range.size());
                     unpack<Op>(bc_data.range, view, haloData_m);
+                    auto& my_view = bc_data.pre_posted_recv_buf->buffer_m;
+                    std::cout << "extent " << my_view.extent(0) << std::endl;
+                    // Use parallel_for to set all elements to 0
+                    Kokkos::parallel_for(
+                        "buffer clear", my_view.extent(0),
+                        KOKKOS_CLASS_LAMBDA(int i) { my_view(i) = 0; });
+                    Kokkos::fence();
+
                     comm.template freeBuffer(bc_data.pre_posted_recv_buf);
                 }
             }

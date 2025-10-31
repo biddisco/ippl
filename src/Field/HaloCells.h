@@ -129,7 +129,7 @@ namespace ippl {
             template <typename Op>
             void applyPeriodicSerialDim(view_type& view, const Layout_t* layout, const int nghost);
 
-        private:
+        public:
             /*!
              * Exchange the data of halo cells.
              * @param view is the original field data
@@ -139,7 +139,8 @@ namespace ippl {
              * unpack function call
              */
             template <class Op>
-            void exchangeBoundaries(view_type& view, Layout_t* layout, SendOrder order, int nghost = 1);
+            void exchangeBoundaries(view_type& view, Layout_t* layout, SendOrder order,
+                                    int nghost = 1);
 
             /*!
              * Extract the subview of the original data. This does not copy.

@@ -79,6 +79,10 @@ namespace ippl {
          * @return Total size of free buffers in bytes.
          */
         virtual size_type getFreeSize() const = 0;
+
+        virtual int getUsedN() const = 0;
+        virtual int getFreeN() const = 0;
+
     };
 
     /**
@@ -140,6 +144,9 @@ namespace ippl {
          */
         size_type getFreeSize() const override;
 
+        int getUsedN() const override;
+        int getFreeN() const override;
+
     private:
         using buffer_comparator_type = bool (*)(const buffer_type&, const buffer_type&);
         using buffer_set_type        = std::set<buffer_type, buffer_comparator_type>;
@@ -154,8 +161,8 @@ namespace ippl {
         buffer_type reallocateLargestFreeBuffer(size_type requiredSize);
         buffer_type allocateNewBuffer(size_type requiredSize);
 
-        size_type usedSize_m;  ///< Total size of all allocated buffers
-        size_type freeSize_m;  ///< Total size of all free buffers
+        size_type usedSize_m{0};  ///< Total size of all allocated buffers
+        size_type freeSize_m{0};  ///< Total size of all free buffers
 
     protected:
         buffer_set_type used_buffers{

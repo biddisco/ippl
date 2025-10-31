@@ -14,7 +14,12 @@ namespace ippl {
         std::map<std::string, std::string> parameters;
         size_t usedSize;
         size_t freeSize;
+        //
+        int usedN;
+        int freeN;
+        //
         std::string memorySpace;
+        //
         int rank;
         std::chrono::time_point<std::chrono::high_resolution_clock> timestamp;
 

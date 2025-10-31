@@ -6,3 +6,5 @@
 
 target_sources(ippl PRIVATE Communicator.cpp CommunicatorLogging.cpp Environment.cpp Buffers.cpp
                             Request.cpp LogEntry.cpp)
+# Boost lockfree
+target_include_directories(ippl PRIVATE ${Boost_INCLUDE_DIRS})

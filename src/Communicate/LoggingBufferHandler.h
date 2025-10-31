@@ -97,6 +97,9 @@ namespace ippl {
          */
         size_type getFreeSize() const override;
 
+        int getUsedN() const override;
+        int getFreeN() const override;
+
         /**
          * @brief Retrieves the list of log entries.
          * @return A constant reference to a vector containing log entries.

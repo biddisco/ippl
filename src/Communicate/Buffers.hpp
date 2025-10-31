@@ -20,6 +20,8 @@
 //   exchanging particle data between ranks.
 //
 
+#include "Communicate/pool.h"
+
 namespace ippl {
     namespace mpi {
 

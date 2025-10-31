@@ -103,7 +103,8 @@ namespace ippl {
                                      .count();
 
                 logFile << timestamp << "," << log.methodName << "," << log.rank << ","
-                        << log.memorySpace << "," << log.usedSize << "," << log.freeSize;
+                        << log.memorySpace << "," << log.usedSize << "," << log.freeSize << ","
+                        << log.usedN << "," << log.freeN;
 
                 logFile << ",\"";
                 bool first = true;

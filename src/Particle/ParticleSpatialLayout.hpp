@@ -254,6 +254,11 @@ namespace ippl {
         pc.unpackRecvs(pre_posted_bufs, nRecvs);
         IpplTimings::stopTimer(unpackTimer);
 
+        static int iteration = 0;
+        Comm->printLogs("commlogs_" + std::to_string(iteration++) + ".txt");
+        if (Comm->rank() == 0) {
+            // std::cout << "buffers_in_existence " << buffers_in_existence << std::endl;
+        }
         IpplTimings::stopTimer(ParticleUpdateTimer);
     }
 
