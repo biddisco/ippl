@@ -45,4 +45,4 @@ echo "N Particles: $nparticles"
 echo "Iterations: $iterations"
 # --------------------
 
-srun $BIND $WRAPPER $EXE $cubesize $cubesize $cubesize $nparticles $iterations FFT 1.0 LeapFrog --overallocate 2.0 --info 10
+srun $BIND $WRAPPER $EXE $cubesize $cubesize $cubesize $nparticles $iterations FFT 0.01 LeapFrog --overallocate 2.0 --info 10

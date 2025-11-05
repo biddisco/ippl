@@ -45,6 +45,6 @@ export MPICH_GPU_SUPPORT_ENABLED=1
 
 CPU_BIND="map_cpu:49,57,17,25,1,9,33,41"
 
-srun --cpu-bind=${CPU_BIND} ./select_gpu $EXE 1024 1024 1024 8589934592 100 FFT 1.0 LeapFrog --overallocate 2.0 --info 10
+srun --cpu-bind=${CPU_BIND} ./select_gpu $EXE 1024 1024 1024 8589934592 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
 
 rm -rf ./select_gpu

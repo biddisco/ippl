@@ -87,7 +87,7 @@ echo "N Particles: $nparticles"
 echo "Iterations: $iterations"
 # --------------------
 
-srun $WRAPPER $HPCRUN_CMDS $NSYS_CMD $EXE $cubesize $cubesize $cubesize $nparticles $iterations FFT 1.0 LeapFrog --overallocate 2.0 --info 10
+srun $WRAPPER $HPCRUN_CMDS $NSYS_CMD $EXE $cubesize $cubesize $cubesize $nparticles $iterations FFT 0.01 LeapFrog --overallocate 2.0 --info 10
 
 if [ -n "$PROFILE_HPCTOOLKIT" ]; then
     debug_output "Running hpcstruct on results"

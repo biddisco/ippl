@@ -30,4 +30,4 @@ export OMP_PLACES=threads
 export OMP_NUM_THREADS=72
 
 MPIRUN=$(spack location mpi)/bin/mpiexec
-$MPIRUN $EXE 1024 1024 1024 8589934592 100 FFT 1.0 LeapFrog --overallocate 2.0 --info 10
+$MPIRUN $EXE 1024 1024 1024 8589934592 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
