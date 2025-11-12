@@ -58,6 +58,13 @@ if("HIP" IN_LIST IPPL_PLATFORMS AND "CUDA" IN_LIST IPPL_PLATFORMS)
 endif()
 
 # -----------------------------------------------------------------------------
+# Platform specific options
+# -----------------------------------------------------------------------------
+if("HIP" IN_LIST IPPL_PLATFORMS)
+  option(IPPL_ENABLE_UNSAFE_HIP_ATOMICS "Add unsafe atomics flag to compilation" OFF)
+endif()
+
+# -----------------------------------------------------------------------------
 # Profiler section
 # -----------------------------------------------------------------------------
 if(IPPL_ENABLE_HIP_PROFILER)
