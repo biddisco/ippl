@@ -432,6 +432,10 @@ namespace ippl {
         using typename BufferHandler<typename rma_archive<rma_buffer<MemorySpace>>::type,
                                      MemorySpace>::size_type;
 
+        static inline std::vector<
+            communication_pool::rma_memory_region<Kokkos_Provider<MemorySpace>>*>
+            buffers_in_use;
+
         PoolBufferHandler() {};
         ~PoolBufferHandler() override {};
 
@@ -440,6 +444,9 @@ namespace ippl {
 
             communication_pool::rma_memory_region<Kokkos_Provider<MemorySpace>>* buff =
                 _pool->allocate_region(size);
+
+            buffers_in_use.push_back(buff);
+
             return std::make_shared<archive_type>(*buff);
         }
 
@@ -453,12 +460,11 @@ namespace ippl {
          */
         virtual void freeBuffer(buffer_type buffer) override {  //
             if constexpr (std::is_same_v<MemorySpace, typename region_type::memory_space>) {
-                // std::cout << grox::debug::print_type<
-                //     typename archive_type::buffer_type::traits::memory_space>()
-                //           << std::endl;
-                // communication_pool::rma_memory_region<Kokkos_Provider<MemorySpace>>* buff =
-                //     buffer->buffer_m;
-                _pool->deallocate(&buffer->buffer_m);
+                auto buff = &buffer->buffer_m;
+                _pool->deallocate(buff);
+                buffers_in_use.erase(
+                    std::remove(buffers_in_use.begin(), buffers_in_use.end(), buff),
+                    buffers_in_use.end());
             }
         }
 
@@ -468,7 +474,12 @@ namespace ippl {
          * Transfers all used buffers to the free state, making them available
          * for reuse. This does not deallocate memory but resets buffer usage.
          */
-        virtual void freeAllBuffers() override {}
+        virtual void freeAllBuffers() override {
+            //
+            for (auto buff : buffers_in_use) {
+                _pool->deallocate(buff);
+            }
+        }
 
         /**
          * @brief Deletes all buffers.
