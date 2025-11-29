@@ -6,15 +6,102 @@
 
 namespace ippl {
 
+    using DefaultExec = Kokkos::DefaultExecutionSpace;
+
+    template <class ExecSpace>
+    void try_create_view() {
+        if constexpr (std::is_same_v<ExecSpace, DefaultExec>) {
+            Kokkos::View<int*, ExecSpace> v("v", 10);
+            std::cout << ExecSpace::name() << " is safe to use\n";
+        } else {
+            std::cout << ExecSpace::name() << " exists but is NOT initialized; skipping\n";
+        }
+    }
+
+    template <class MemorySpace>
+    struct DefaultExecFor;
+
+    template <>
+    struct DefaultExecFor<Kokkos::HostSpace> {
+        using type = Kokkos::DefaultHostExecutionSpace;
+    };
+
+    template <>
+    struct DefaultExecFor<Kokkos::SharedHostPinnedSpace> {
+        using type = Kokkos::DefaultHostExecutionSpace;
+    };
+
+    template <>
+    struct DefaultExecFor<Kokkos::CudaSpace> {
+        using type = Kokkos::Cuda;
+    };
+
+    template <>
+    struct DefaultExecFor<Kokkos::CudaUVMSpace> {
+        using type = Kokkos::Cuda;
+    };
+#if 0
+    template <>
+    struct DefaultExecFor<Kokkos::HIPSpace> {
+        using type = Kokkos::HIP;
+    };
+#endif
+
+    // template <>
+    // struct DefaultExecFor<Kokkos::HIPSpace> {
+    //     using type = Kokkos::HIP;
+    // };
+
+    // ---------------------------------------
+    // singleton access to network/testnet
+    // ---------------------------------------
+    /////////////////////////////////////////////////////////////////////////////////////
+    template <typename MemorySpace>
+    static std::shared_ptr<ippl::BufferHandler<MemorySpace>> get_buffer_handler_instance() {
+        static std::shared_ptr<ippl::BufferHandler<MemorySpace>> comm_buff_handler_ptr = nullptr;
+
+        using Exec = typename DefaultExecFor<MemorySpace>::type;
+        if constexpr (std::is_same_v<Exec, DefaultExec>) {
+            if (comm_buff_handler_ptr == nullptr) {
+                // std::cout << "Creating pool buffer handler "
+                //           << grox::debug::print_type<ippl::BufferHandler<MemorySpace>>()
+                //           << std::endl;
+                comm_buff_handler_ptr = std::make_shared<ippl::PoolBufferHandler<MemorySpace>>();
+            }
+        } else {
+        }
+
+        return comm_buff_handler_ptr;
+    }
+
+    template <typename MemorySpace>
+    static std::shared_ptr<ippl::PoolBufferHandler<MemorySpace>>
+    get_comm_buffer_handler_instance() {
+        return std::dynamic_pointer_cast<PoolBufferHandler<MemorySpace>>(
+            get_buffer_handler_instance<MemorySpace>());
+    }
+
+    template <typename MemorySpace>
+    static std::shared_ptr<ippl::PoolBufferHandler<MemorySpace>> get_multispace_bufferhandler() {
+        return std::dynamic_pointer_cast<PoolBufferHandler<MemorySpace>>(
+            get_buffer_handler_instance<MemorySpace>());
+    }
+
+    // ---------------------------------------
+    //
+    // ---------------------------------------
     template <typename MemorySpace>
     LoggingBufferHandler<MemorySpace>::LoggingBufferHandler(
-        std::shared_ptr<BufferHandler<MemorySpace>> handler, int rank)
-        : handler_m(std::move(handler))
+        std::shared_ptr<ippl::BufferHandler<MemorySpace>> handler, int rank)
+        : handler_m(handler)
         , rank_m(rank) {}
 
     template <typename MemorySpace>
     LoggingBufferHandler<MemorySpace>::LoggingBufferHandler() {
-        handler_m = std::make_shared<DefaultBufferHandler<MemorySpace>>();
+        // using Exec = typename DefaultExecFor<MemorySpace>::type;
+        // if constexpr (Exec::is_available()) {
+        handler_m = get_comm_buffer_handler_instance<MemorySpace>();
+        // }
         MPI_Comm_rank(MPI_COMM_WORLD, &rank_m);
     }
 
@@ -35,36 +122,40 @@ namespace ippl {
 
     template <typename MemorySpace>
     void LoggingBufferHandler<MemorySpace>::freeAllBuffers() {
-        handler_m->freeAllBuffers();
-        logMethod("freeAllBuffers", {});
+        if (handler_m) {
+            handler_m->freeAllBuffers();
+            logMethod("freeAllBuffers", {});
+        }
     }
 
     template <typename MemorySpace>
     void LoggingBufferHandler<MemorySpace>::deleteAllBuffers() {
-        handler_m->deleteAllBuffers();
-        logMethod("deleteAllBuffers", {});
+        if (handler_m) {
+            handler_m->deleteAllBuffers();
+            logMethod("deleteAllBuffers", {});
+        }
     }
 
     template <typename MemorySpace>
     typename LoggingBufferHandler<MemorySpace>::size_type
     LoggingBufferHandler<MemorySpace>::getUsedSize() const {
-        return handler_m->getUsedSize();
+        return handler_m ? handler_m->getUsedSize() : 0;
     }
 
     template <typename MemorySpace>
     typename LoggingBufferHandler<MemorySpace>::size_type
     LoggingBufferHandler<MemorySpace>::getFreeSize() const {
-        return handler_m->getFreeSize();
+        return handler_m ? handler_m->getFreeSize() : 0;
     }
 
     template <typename MemorySpace>
     int LoggingBufferHandler<MemorySpace>::getUsedN() const {
-        return handler_m->getUsedN();
+        return handler_m ? handler_m->getUsedN() : 0;
     }
 
     template <typename MemorySpace>
     int LoggingBufferHandler<MemorySpace>::getFreeN() const {
-        return handler_m->getFreeN();
+        return handler_m ? handler_m->getFreeN() : 0;
     }
 
     template <typename MemorySpace>
@@ -77,13 +168,13 @@ namespace ippl {
         const std::string& methodName, const std::map<std::string, std::string>& parameters) {
         auto t = std::chrono::high_resolution_clock::now();
 
-        std::stringstream temp;
-        temp << t.time_since_epoch().count() << "\t" << methodName << "\t"
-             << handler_m->getUsedSize() << "\t" << handler_m->getFreeSize() << "\t"
-             << handler_m->getUsedN() << "\t" << handler_m->getFreeN() << "\t"
-             << MemorySpace::name() << "\t" << rank_m << std::endl;
-        ;
-        std::cout << temp.str();
+        // std::stringstream temp;
+        // temp << t.time_since_epoch().count() << "\t" << methodName << "\t"
+        //      << handler_m->getUsedSize() << "\t" << handler_m->getFreeSize() << "\t"
+        //      << handler_m->getUsedN() << "\t" << handler_m->getFreeN() << "\t"
+        //      << MemorySpace::name() << "\t" << rank_m << std::endl;
+        // ;
+        // std::cout << temp.str();
 
         logEntries_m.push_back({methodName, parameters, handler_m->getUsedSize(),
                                 handler_m->getFreeSize(), handler_m->getUsedN(),

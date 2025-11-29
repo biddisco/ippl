@@ -27,6 +27,7 @@
 #include "Utility/ViewUtils.h"
 
 #include "Communicate/Window.h"
+#include "Particle/ParticleBase.h"
 
 namespace ippl {
 
@@ -174,10 +175,19 @@ namespace ippl {
         // ----------------------------------
         // 2.2 Setup Requests for MPI async sends and recvs
         // ----------------------------------
-        int tag = Comm->next_tag(mpi::tag::P_SPATIAL_LAYOUT, mpi::tag::P_LAYOUT_CYCLE);
-        std::vector<MPI_Request> send_requests(0);
-        std::vector<MPI_Request> recv_requests(0);
-        std::vector<int> nRecvs;
+        int tag            = Comm->next_tag(mpi::tag::P_SPATIAL_LAYOUT, mpi::tag::P_LAYOUT_CYCLE);
+        using memory_space = position_memory_space;
+        using buffer_type  = mpi::Communicator::buffer_type<memory_space>;
+        struct async_data {
+            buffer_type async_buffer;
+            int tag;
+            size_type nRecvs;
+            MPI_Request request;
+        };
+        std::vector<async_data> send_requests;
+        std::vector<async_data> recv_requests;
+        recv_requests.reserve(nDestinationRanks);
+        send_requests.reserve(nDestinationRanks);
 
         IpplTimings::stopTimer(preprocTimer);
 
@@ -187,11 +197,14 @@ namespace ippl {
         static IpplTimings::TimerRef precvTimer = IpplTimings::getTimer("prePostParticleRecv");
         IpplTimings::startTimer(precvTimer);
 
-        mpi::comm_buffer_container pre_posted_bufs;
         for (int rank = 0; rank < nRanks; ++rank) {
             if (nRecvs_m[rank] > 0) {
-                nRecvs.push_back(nRecvs_m[rank]);
-                pc.irecvFromRank(rank, tag, nRecvs_m[rank], recv_requests, pre_posted_bufs);
+                size_type bufSize = pc.template packedSize<memory_space>(nRecvs_m[rank]);
+                SPDLOG_DEBUG("bufSize {} {}", bufSize, grox::debug::print_type<memory_space>());
+                auto buf            = Comm->template getBuffer<memory_space>(bufSize);
+                MPI_Request request = MPI_REQUEST_NULL;
+                Comm->irecv(rank, tag, *buf, request, bufSize);
+                recv_requests.push_back({buf, tag, nRecvs_m[rank], request});
             }
         }
         IpplTimings::stopTimer(precvTimer);
@@ -210,7 +223,7 @@ namespace ippl {
             hash_type hash("hash", rankSendCount_hview(rank));
             fillHash(rank, particleRanks, hash);
 
-            pc.sendToRank(rank, tag, send_requests, hash);
+            // pc.sendToRank(rank, tag, send_requests, hash);
         }
 
         IpplTimings::stopTimer(sendTimer);
@@ -232,18 +245,63 @@ namespace ippl {
         static IpplTimings::TimerRef sendWaitTimer = IpplTimings::getTimer("particleSendWait");
         IpplTimings::startTimer(sendWaitTimer);
         if (send_requests.size() > 0) {
-            MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
+            // MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
         }
         IpplTimings::stopTimer(sendWaitTimer);
 
         // ----------------------------------
-        // 4.2 RecvWait
+        // 4.2 receive, then deserialize and unpack pre-posted receives
         // ----------------------------------
         static IpplTimings::TimerRef recvWaitTimer = IpplTimings::getTimer("particleRecvWait");
         IpplTimings::startTimer(recvWaitTimer);
         if (recv_requests.size() > 0) {
-            MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
+            bool redo = true;
+            while (redo) {
+                redo = false;
+                for (auto it = recv_requests.begin(); it != recv_requests.end(); ++it) {
+                    int flag = 0;
+                    MPI_Status status;
+                    spdlog::trace("iRecv MPI_Test, {} {}", Comm->rank(),
+                                  static_cast<uintptr_t>(it->request));
+                    if (it->request != MPI_REQUEST_NULL) {
+                        spdlog::trace("MPI_Test recv tag {:04}, req {}", it->tag,
+                                      static_cast<uintptr_t>(it->request));
+                        auto old_request = it->request;
+                        MPI_Test(&it->request, &flag, &status);
+                        if (flag) {
+                            spdlog::debug("SUCCESS iRecv MPI_Test, {} {}", Comm->rank(),
+                                          static_cast<uintptr_t>(old_request));
+                            it->request = MPI_REQUEST_NULL;
+
+                            // detail::runForAllSpaces([&]<typename memory_space>() {
+                            //     for (auto buf : it->async_buffer.template get<memory_space>()) {
+                            //         buf->resetReadPos();
+                            //         forAllAttributes<memory_space>(
+                            //             [&]<typename Attribute>(Attribute& att) {
+                            //                 att->deserialize(*(it->async_buffer), it->nRecvs);
+                            //             });
+                            //         // Comm->freeBuffer(buf);
+                            //         unpack(it->nRecvs);
+                            //     }
+                            // });
+
+                            Comm->template freeBuffer(it->async_buffer);
+
+                        } else {
+                            spdlog::trace("FAIL iRecv MPI_Test, {} {}", Comm->rank(),
+                                          static_cast<uintptr_t>(it->request));
+                            redo = true;
+                        }
+                    }
+                }
+            }
+
+            // std::cout << "WaitAll for " << pre_posted_bufs.size() << " " <<
+            // recv_requests.size()
+            //           << " buffers" << std::endl;
+            // MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
         }
+
         IpplTimings::stopTimer(recvWaitTimer);
 
         // ----------------------------------
@@ -251,11 +309,11 @@ namespace ippl {
         // ----------------------------------
         static IpplTimings::TimerRef unpackTimer = IpplTimings::getTimer("particleUnpack");
         IpplTimings::startTimer(unpackTimer);
-        pc.unpackRecvs(pre_posted_bufs, nRecvs);
+        // pc.unpackRecvs(pre_posted_bufs, nRecvs);
         IpplTimings::stopTimer(unpackTimer);
 
         static int iteration = 0;
-        Comm->printLogs("commlogs_" + std::to_string(iteration++) + ".txt");
+        // Comm->printLogs("commlogs_" + std::to_string(iteration++) + ".txt");
         if (Comm->rank() == 0) {
             // std::cout << "buffers_in_existence " << buffers_in_existence << std::endl;
         }

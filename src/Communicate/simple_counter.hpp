@@ -60,7 +60,7 @@ namespace ippl::communication_pool {
 
         inline T operator-=(T const& rhs) { return (value_ -= rhs); }
 
-        friend std::ostream& operator<<(std::ostream& os, simple_counter<T, true> const& x) {
+        friend inline std::ostream& operator<<(std::ostream& os, simple_counter<T, true> const& x) {
             os << x.value_;
             return os;
         }
@@ -95,7 +95,7 @@ namespace ippl::communication_pool {
 
         inline T operator-=(T const&) { return 0; }
 
-        friend std::ostream& operator<<(std::ostream& os, simple_counter<T, false> const&) {
+        friend inline std::ostream& operator<<(std::ostream& os, simple_counter<T, false> const&) {
             os << "undefined";
             return os;
         }

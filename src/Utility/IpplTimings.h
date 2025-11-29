@@ -33,6 +33,7 @@
 
 #include "Utility/PAssert.h"
 #include "Utility/Timer.h"
+#include "Utility/logging.h"
 #include "Utility/my_auto_ptr.h"
 
 // a simple class used to store timer values
@@ -147,7 +148,10 @@ public:
     typedef Timing::TimerInfo TimerInfo;
 
     // create a timer, or get one that already exists
-    static TimerRef getTimer(const char* nm) { return instance->getTimer(nm); }
+    static TimerRef getTimer(const char* nm) {
+        SPDLOG_TRACE("Starting timer [{}]", nm);
+        return instance->getTimer(nm);
+    }
 
     // start a timer
     static void startTimer(TimerRef t) { instance->startTimer(t); }

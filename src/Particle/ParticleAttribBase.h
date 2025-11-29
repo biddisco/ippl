@@ -18,6 +18,7 @@
 #include "Types/ViewTypes.h"
 
 #include "Communicate/Archive.h"
+#include "Communicate/BufferHandler.h"
 
 namespace ippl {
     namespace detail {
@@ -33,14 +34,18 @@ namespace ippl {
             using hash_type       = ippl::detail::hash_type<MemorySpace>;
             using memory_space    = MemorySpace;
             using execution_space = typename memory_space::execution_space;
+            using archive_type    = rma_archive<rma_buffer<MemorySpace>>::type;
+            // using buffer_type =
+            //     typename detail::ViewType<char, 1, MemorySpace,
+            //                               Kokkos::MemoryTraits<Kokkos::Aligned>>::view_type;
 
             template <typename... Properties>
             using with_properties = typename WithMemSpace<Properties...>::type;
 
-            ParticleAttribBase(){this->name_m = "UNNAMED_attribute";}
+            ParticleAttribBase() { this->name_m = "UNNAMED_attribute"; }
 
-            virtual void set_name(const std::string & name_) = 0;
-            
+            virtual void set_name(const std::string& name_) = 0;
+
             virtual std::string get_name() const = 0;
 
             virtual void create(size_type) = 0;
@@ -52,9 +57,11 @@ namespace ippl {
 
             virtual void unpack(size_type) = 0;
 
-            virtual void serialize(Archive<memory_space>& ar, size_type nsends) = 0;
+            // template <typename Archive>
+            virtual void serialize(archive_type& ar, size_type nsends) = 0;
 
-            virtual void deserialize(Archive<memory_space>& ar, size_type nrecvs) = 0;
+            // template <typename Archive>
+            virtual void deserialize(archive_type& ar, size_type nrecvs) = 0;
 
             virtual size_type size() const = 0;
 
@@ -64,7 +71,7 @@ namespace ippl {
             size_type getParticleCount() const { return *localNum_mp; }
 
             virtual void applyPermutation(const hash_type&) = 0;
-            virtual void internalCopy(const hash_type&) = 0;
+            virtual void internalCopy(const hash_type&)     = 0;
 
         protected:
             const size_type* localNum_mp;

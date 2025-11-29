@@ -10,6 +10,8 @@
 
 #include "Types/ViewTypes.h"
 
+#include "Communicate/print.hpp"
+
 namespace ippl {
     namespace detail {
         /*!
@@ -100,16 +102,17 @@ namespace ippl {
         }
 
         template <typename View>
-        void write(const std::string &title, int rank, const View &view, std::ostream& out = std::cout) {
-            auto mirror =
-                Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
+        void write(const std::string& title, int rank, const View& view, int N,
+                   std::ostream& out = std::cout) {
+            auto mirror = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
             std::ostringstream temp;
             temp << std::endl << title << " rank " << rank << ": ";
             temp << " [elements: " << mirror.extent(0) << "]: ";
-            for (size_t i = 0; i < mirror.extent(0); ++i) {
-                temp << mirror(i) << ", " ;
-            }
-            temp << std::endl;
+            auto crc = hpx::debug::mem_crc32(mirror.data(), N);
+            // for (size_t i = 0; i < mirror.extent(0); ++i) {
+            //     temp << mirror(i) << ", " ;
+            // }
+            temp << crc << std::endl;
             out << temp.str();
         }
 

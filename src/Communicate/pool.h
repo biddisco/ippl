@@ -24,25 +24,29 @@
 
 #include "Types/Vector.h"
 
+#include "Utility/demangle_helper.hpp"
+#include "Utility/logging.h"
+
+#include "Communicate/print.hpp"
 #include "Communicate/simple_counter.hpp"
 
-// the default memory chunk size in bytes
+// default memory chunk sizes in bytes  1 * 0x0400 = 1KB
 #define RDMA_POOL_1K_CHUNK_SIZE     0x001 * 0x0400  //  1KB
 #define RDMA_POOL_SMALL_CHUNK_SIZE  0x010 * 0x0400  // 16KB
 #define RDMA_POOL_MEDIUM_CHUNK_SIZE 0x040 * 0x0400  // 64KB
 #define RDMA_POOL_LARGE_CHUNK_SIZE  0x400 * 0x0400  //  1MB
 
-#define RDMA_POOL_MAX_1K_CHUNKS     1024
-#define RDMA_POOL_MAX_SMALL_CHUNKS  2048
-#define RDMA_POOL_MAX_MEDIUM_CHUNKS 128
-#define RDMA_POOL_MAX_LARGE_CHUNKS  16
+#define RDMA_POOL_MAX_1K_CHUNKS     256
+#define RDMA_POOL_MAX_SMALL_CHUNKS  32
+#define RDMA_POOL_MAX_MEDIUM_CHUNKS 2
+#define RDMA_POOL_MAX_LARGE_CHUNKS  1
 
 // Description of memory pool objects:
 //
 // memory_region_allocator:
 // An allocator that returns memory of the requested size. The memory is pinned
-// and ready to be used for RDMA operations. A memory_region object is
-// used, it contains the memory registration information needed by the libfabric API.
+// and ready to be used for RDMA operations. A memory_region object is used,
+// it contains the memory registration information needed by the libfabric API.
 //
 // rdma_chunk_pool :
 // Allocate N chunks of memory in one go, a single memory registration is
@@ -69,11 +73,6 @@
 // memory to the pool for on-the-fly registration (rdma transfer of user memory chunks)
 // and later de-registration.
 
-#define LOG_DEBUG_MSG(a)
-#define LOG_TRACE_MSG(a)
-#define LOG_ERROR_MSG(a)
-#define LOG_EXCLUSIVE(a)
-
 /// Marks a class as non-copyable and non-movable.
 #define HPX_NON_COPYABLE(cls)            \
     cls(cls const&)            = delete; \
@@ -90,16 +89,16 @@ namespace ippl::communication_pool {
 
     // A simple tag type we use for logging assistance (identification)
     struct pool_tiny {
-        static const char* desc() { return "Tiny "; }
+        static const char* desc() { return "Tiny"; }
     };
     struct pool_small {
-        static const char* desc() { return "Small "; }
+        static const char* desc() { return "Small"; }
     };
     struct pool_medium {
-        static const char* desc() { return "Medium "; }
+        static const char* desc() { return "Medium"; }
     };
     struct pool_large {
-        static const char* desc() { return "Large "; }
+        static const char* desc() { return "Large"; }
     };
 
     // --------------------------------------------------------------------
@@ -116,15 +115,16 @@ namespace ippl::communication_pool {
         // allocate a registered memory region
         static region_ptr malloc(domain_type* pd, const std::size_t bytes) {
             region_ptr region = std::make_shared<region_type>();
-            LOG_DEBUG_MSG("Allocating " << hexuint32(bytes) << "using chunk mallocator");
+            SPDLOG_DEBUG("Allocating {} {} using chunk mallocator",
+                         grox::debug::print_type<region_type>(), bytes);
             region->allocate(pd, bytes);
             return region;
         }
 
         // release a registered memory region
         static void free(region_ptr region) {
-            LOG_DEBUG_MSG("Freeing a block from chunk mallocator (ref count) "
-                          << region.use_count());
+            SPDLOG_DEBUG("Freeing a block from chunk mallocator (ref count) {}",
+                         region.use_count());
             region.reset();
         }
     };
@@ -142,21 +142,19 @@ namespace ippl::communication_pool {
         // ------------------------------------------------------------------------
         pool_container(domain_type* pd)
             : accesses_(0)
-            , in_use_(0)
+            , in_use_(MaxChunks)
             , pd_(pd) {}
 
         // ------------------------------------------------------------------------
         bool allocate_pool() {
-            LOG_DEBUG_MSG(PoolType::desc()
-                          << "Allocating "
-                          << "ChunkSize " << hexuint32(ChunkSize) << "num_chunks "
-                          << decnumber(MaxChunks) << "total " << hexuint32(ChunkSize * MaxChunks));
+            SPDLOG_DEBUG("[{:6}] Allocating ChunkSize {}, num_chunks {}, total {}",
+                         PoolType::desc(), ChunkSize, MaxChunks, (ChunkSize * MaxChunks));
 
             // Allocate one very large registered block for N small blocks
             region_ptr block = Allocator().malloc(pd_, ChunkSize * MaxChunks);
             // store a copy of this to make sure it is 'alive'
             block_list_[block->get_address()] = block;
-
+            // auto end_addr =
             // break the large region into N small regions
             uint64_t offset = 0;
             for (std::size_t i = 0; i < MaxChunks; ++i) {
@@ -166,8 +164,9 @@ namespace ippl::communication_pool {
                     block->get_region(), static_cast<char*>(block->get_base_address()) + offset,
                     static_cast<char*>(block->get_base_address()), ChunkSize,
                     region_type::BLOCK_PARTIAL);
-                LOG_TRACE_MSG(PoolType::desc()
-                              << "Allocate Block " << decnumber(i) << region_list_[i]);
+                // LOG_TRACE_MSG(PoolType::desc()
+                //               << grox::debug::print_type<RegionProvider>() << " "
+                //               << "Allocate Block " << decnumber(i) << region_list_[i]);
                 // push the pointer onto our stack
                 push(&region_list_[i]);
                 offset += ChunkSize;
@@ -179,9 +178,9 @@ namespace ippl::communication_pool {
         // ------------------------------------------------------------------------
         void DeallocatePool() {
             if (in_use_ != 0) {
-                LOG_ERROR_MSG(PoolType::desc()
-                              << "Deallocating free_list : Not all blocks were returned "
-                              << " refcounts " << decnumber(in_use_));
+                SPDLOG_ERROR(
+                    "[{:6}] Deallocating free_list : Not all blocks were returned, refcounts {}",
+                    PoolType::desc(), (unsigned int)in_use_);
             }
             region_type* region = nullptr;
             while (!free_list_.pop(region)) {
@@ -196,23 +195,24 @@ namespace ippl::communication_pool {
 
         // ------------------------------------------------------------------------
         inline void push(region_type* region) {
-            LOG_TRACE_MSG(PoolType::desc()
-                          << "Push block " << *region << "Used " << decnumber(in_use_ - 1)
-                          << "Accesses " << decnumber(accesses_));
-
-            LOG_EXCLUSIVE(uintptr_t val = uintptr_t(region->get_address());
-                          LOG_TRACE_MSG(PoolType::desc() << "Writing 0xdeadbeef to region address "
-                                                         << hexpointer(val));
-                          if (region->get_address() != nullptr) {
-                              // get use the pointer to the region
-                              uintptr_t* ptr = reinterpret_cast<uintptr_t*>(val);
-                              for (unsigned int c = 0; c < ChunkSize / 8; ++c) {
-                                  ptr[c] = 0xdeadbeef;
-                              }
-                          });
-
+            SPDLOG_TRACE("[{:6}] {} Push block {}, Used {}, Accesses {}", PoolType::desc(),
+                         grox::debug::print_type<typename RegionProvider::memory_space>(), *region,
+                         (unsigned int)(in_use_ - 1), (unsigned int)accesses_);
+#ifdef EXTRA_LOG_STUFF
+            uintptr_t val = uintptr_t(region->get_address());
+            SPDLOG_TRACE("{} Writing 0xdeadbeef to region address ", PoolType::desc(), (void*)val);
+            if (region->get_address() != nullptr) {
+                // get use the pointer to the region
+                uintptr_t* ptr = reinterpret_cast<uintptr_t*>(val);
+                for (unsigned int c = 0; c < ChunkSize / 8; ++c) {
+                    ptr[c] = 0xdeadbeef;
+                }
+            };
+#endif
+            assert(ChunkSize == region->get_size());
             if (!free_list_.push(region)) {
-                LOG_ERROR_MSG(PoolType::desc() << "Error in memory pool push");
+                SPDLOG_ERROR("[{:6}] {}  Error in memory pool push", PoolType::desc(),
+                             grox::debug::print_type<typename RegionProvider::memory_space>());
             }
             // decrement one reference
             --in_use_;
@@ -223,14 +223,21 @@ namespace ippl::communication_pool {
             // get a block
             region_type* region = nullptr;
             if (!free_list_.pop(region)) {
-                LOG_DEBUG_MSG(PoolType::desc() << "Error in memory pool pop");
+                SPDLOG_ERROR("[{:6}] {}  Error in memory pool pop", PoolType::desc(),
+                             grox::debug::print_type<typename RegionProvider::memory_space>());
                 return nullptr;
+            }
+            if (ChunkSize != region->get_size()) {
+                SPDLOG_ERROR("[{:6}] {} Pop block {}, Used {}, Access {}", PoolType::desc(),
+                             grox::debug::print_type<typename RegionProvider::memory_space>(),
+                             *region, (unsigned int)(in_use_), (unsigned int)(accesses_));
+                assert(ChunkSize == region->get_size());
             }
             ++in_use_;
             ++accesses_;
-            LOG_TRACE_MSG(PoolType::desc()
-                          << "Pop block " << *region << "Used " << decnumber(in_use_) << "Accesses "
-                          << decnumber(accesses_));
+            SPDLOG_DEBUG("[{:6}] {} Pop block {}, Used {}, Access {}", PoolType::desc(),
+                         grox::debug::print_type<typename RegionProvider::memory_space>(), *region,
+                         (unsigned int)(in_use_), (unsigned int)(accesses_));
             return region;
         }
 
@@ -243,18 +250,17 @@ namespace ippl::communication_pool {
         // for debug log messages
         std::string status() {
             std::stringstream temp;
-            // temp << "| " << PoolType::desc() << "ChunkSize " << hexlength(ChunkSize) << "Free "
-            //      << decnumber(MaxChunks - in_use_) << "Used " << decnumber(in_use_) << "Accesses
-            //      "
-            //      << decnumber(accesses_);
+            temp << "| " << PoolType::desc() << " ChunkSize " << hexuint32(ChunkSize) << "Free "
+                 << decnumber(MaxChunks - in_use_) << "Used " << decnumber(in_use_) << "Accesses "
+                 << decnumber(accesses_);
             return temp.str();
         }
 
         // ------------------------------------------------------------------------
         constexpr std::size_t chunk_size() const { return ChunkSize; }
         //
-        simple_counter<unsigned int> accesses_;
-        simple_counter<unsigned int> in_use_;
+        simple_counter<unsigned int> accesses_{0};
+        simple_counter<unsigned int> in_use_{0};
         //
         domain_type* pd_;
         std::unordered_map<const char*, region_ptr> block_list_;
@@ -289,7 +295,8 @@ namespace ippl::communication_pool {
             small_.allocate_pool();
             medium_.allocate_pool();
             large_.allocate_pool();
-            LOG_DEBUG_MSG("Completed memory_pool initialization");
+            // LOG_DEBUG_MSG("Completed memory_pool initialization for "
+            //               << grox::debug::print_type<RegionProvider>() << "\n\n");
         }
 
         //----------------------------------------------------------------------------
@@ -306,7 +313,7 @@ namespace ippl::communication_pool {
 
         // -------------------------
         // User allocation interface
-        // -------------------------
+        // -------------------------dest {}, tag {}
         // The Region* versions of allocate/deallocate
         // should be used in preference to the std:: compatible
         // versions using char* for efficiency
@@ -344,13 +351,14 @@ namespace ippl::communication_pool {
             }
             // if we didn't get a block from the cache, create one on the fly
             if (region == nullptr) {
-                region = allocate_temporary_region(length);
+                throw std::runtime_error("Help - temporary region");
+                // region = allocate_temporary_region(length);
             }
 
-            LOG_TRACE_MSG("Popping Block " << *region << tiny_.status() << small_.status()
-                                           << medium_.status() << large_.status() << large_.status()
-                                           << "temp regions " << decnumber(temp_regions));
-            //
+            SPDLOG_DEBUG("Popped Block {}, Length {}, {} {} {} {} temp regions {}", *region, length,
+                         tiny_.status(), small_.status(), medium_.status(), large_.status(),
+                         (int)temp_regions);
+
             return region;
         }
 
@@ -358,6 +366,7 @@ namespace ippl::communication_pool {
         // release a region back to the pool
         inline void deallocate(region_type* region) {
             // if this region was registered on the fly, then don't return it to the pool
+#if defined(SUPPORT_TEMP_REGIONS)
             if (region->get_temp_region() || region->get_user_region()) {
                 if (region->get_temp_region()) {
                     --temp_regions;
@@ -371,7 +380,7 @@ namespace ippl::communication_pool {
                 delete region;
                 return;
             }
-
+#endif
             // put the block back on the free list
             if (region->get_size() <= tiny_.chunk_size()) {
                 tiny_.push(region);
@@ -383,23 +392,23 @@ namespace ippl::communication_pool {
                 large_.push(region);
             }
 
-            LOG_TRACE_MSG("Pushing Block " << *region << tiny_.status() << small_.status()
-                                           << medium_.status() << large_.status() << "temp regions "
-                                           << decnumber(temp_regions));
+            SPDLOG_DEBUG("Pushing Block {}, Length {}, {} {} {} {} temp regions {}", *region,
+                         region->get_size(), tiny_.status(), small_.status(), medium_.status(),
+                         large_.status(), (int)temp_regions);
         }
 
         //----------------------------------------------------------------------------
         // allocates a region from the heap and registers it, it bypasses the pool
         // when deallocted, it will be unregistered and deleted, not returned to the pool
-        inline region_type* allocate_temporary_region(std::size_t length) {
-            region_type* region = new region_type();
-            region->set_temp_region();
-            region->allocate(protection_domain_, length);
-            ++temp_regions;
-            LOG_TRACE_MSG("Allocating temp region " << *region << "temp regions "
-                                                    << decnumber(temp_regions));
-            return region;
-        }
+        // inline region_type* allocate_temporary_region(std::size_t length) {
+        //     region_type* region = new region_type();
+        //     region->set_temp_region();
+        //     region->allocate(protection_domain_, length);
+        //     ++temp_regions;
+        //     LOG_TRACE_MSG("Allocating temp region " << *region << "temp regions "
+        //                                             << decnumber(temp_regions));
+        //     return region;
+        // }
 
         //----------------------------------------------------------------------------
         // protection domain that memory is registered with
@@ -422,5 +431,33 @@ namespace ippl::communication_pool {
         // counters
         simple_counter<int, true> temp_regions;
         simple_counter<int, true> user_regions;
+
+        // static std::shared_ptr<rma_memory_pool<RegionProvider>> get_instance() {
+        //     using domain_type = rma_memory_pool<RegionProvider>::domain_type;
+        //     static std::shared_ptr<rma_memory_pool<RegionProvider>> rma_pool_ptr = nullptr;
+        //     if (rma_pool_ptr == nullptr) {
+        //         std::cout << "Creating "
+        //                   << grox::debug::print_type<rma_memory_pool<RegionProvider>>()
+        //                   << std::endl;
+        //         rma_pool_ptr = std::make_shared<rma_memory_pool<RegionProvider>>(
+        //             reinterpret_cast<domain_type*>(std::intptr_t(0)));
+        //     }
+        //     return rma_pool_ptr;
+        // }
     };
+
+    template <typename RegionProvider>
+    static std::shared_ptr<rma_memory_pool<RegionProvider>> get_instance() {
+        using domain_type = rma_memory_pool<RegionProvider>::domain_type;
+        static std::shared_ptr<rma_memory_pool<RegionProvider>> rma_pool_ptr = nullptr;
+        if (rma_pool_ptr == nullptr) {
+            // std::cout << "Creating " <<
+            // grox::debug::print_type<rma_memory_pool<RegionProvider>>()
+            // << std::endl;
+            rma_pool_ptr = std::make_shared<rma_memory_pool<RegionProvider>>(
+                reinterpret_cast<domain_type*>(std::intptr_t(0)));
+        }
+        return rma_pool_ptr;
+    }
+
 }  // namespace ippl::communication_pool

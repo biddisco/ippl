@@ -14,7 +14,8 @@ namespace ippl {
                 BC_CYCLE             = 5000,
 
                 // Halo cells
-                HALO      = 5001,
+                HALO = 5001,
+                // HALO      = 5001,
                 HALO_SEND = 15000,
                 HALO_RECV = 20000,
 
@@ -44,7 +45,7 @@ namespace ippl {
                 FEMVECTOR = 40000
             };
         }  // namespace tag
-    }      // namespace mpi
+    }  // namespace mpi
 }  // namespace ippl
 
 #endif

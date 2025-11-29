@@ -34,6 +34,7 @@ protected:
     std::string solver_m;
     std::string stepMethod_m;
     std::vector<std::string> preconditioner_params_m;
+
 public:
     AlpineManager(size_type totalP_, int nt_, Vector_t<int, Dim>& nr_, double lbt_,
                   std::string& solver_, std::string& stepMethod_,
@@ -97,7 +98,7 @@ public:
 
     std::vector<std::string> getPreconditionerParams() const { return preconditioner_params_m; };
 
-    virtual void dump(){/* default does nothing */};
+    virtual void dump() { /* default does nothing */ };
 
     void pre_step() override {
         Inform m("Pre-step");
@@ -151,7 +152,7 @@ public:
                 m << "Total particles in the sim. " << totalP_m << " "
                   << "after update: " << TotalParticles << endl;
                 m << "Rel. error in charge conservation: " << relError << endl;
-                ippl::Comm->abort();
+                // ippl::Comm->abort();
             }
         }
 

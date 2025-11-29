@@ -25,13 +25,14 @@ namespace ippl {
          * @tparam Properties variadic template for Kokkos::View
          */
 
-        template <class... Properties>
+        template <typename BufferType>
         class Archive {
         public:
-            using buffer_type  = typename ViewType<char, 1, Properties...>::view_type;
-            using pointer_type = typename buffer_type::pointer_type;
+            using buffer_type  = BufferType;
+            using pointer_type = typename BufferType::pointer_type;
 
             Archive(size_type size = 0);
+            Archive(BufferType other_buf);
 
             /*!
              * Serialize.
@@ -82,7 +83,11 @@ namespace ippl {
 
             size_type getBufferSize() const { return buffer_m.size(); }
 
-            void resizeBuffer(size_type size) { Kokkos::resize(buffer_m, size); }
+            void resizeBuffer(size_type size) {
+                std::cout << "Resizing to " << size << std::endl;
+                throw std::runtime_error("Resizing aarchive");
+                Kokkos::resize(buffer_m, size);
+            }
 
             void reallocBuffer(size_type size) { Kokkos::realloc(buffer_m, size); }
 
@@ -97,7 +102,7 @@ namespace ippl {
             //! read position for deserialization
             size_type readpos_m;
             //! serialized data
-            buffer_type buffer_m;
+            BufferType buffer_m;
         };
     }  // namespace detail
 }  // namespace ippl

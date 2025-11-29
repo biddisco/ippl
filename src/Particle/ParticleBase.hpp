@@ -305,25 +305,7 @@ namespace ippl {
     }
 
     template <class PLayout, typename... IP>
-    void ParticleBase<PLayout, IP...>::irecvFromRank(int rank, int tag, size_type nRecvs,
-                                                     std::vector<MPI_Request>& requests,
-                                                     mpi::comm_buffer_container& buf_list) {
-        detail::runForAllSpaces([&]<typename MemorySpace>() {
-            size_type bufSize = packedSize<MemorySpace>(nRecvs);
-            if (bufSize == 0) {
-                return;
-            }
-            auto buf = Comm->getBuffer<MemorySpace>(bufSize);
-            MPI_Request request;
-            void* ptr = buf->getBuffer();
-            MPI_Irecv(ptr, bufSize, MPI_BYTE, rank, tag++, Comm->getCommunicator(), &request);
-            requests.push_back(request);
-            buf_list.template get<MemorySpace>().push_back(buf);
-        });
-    }
-
-    template <class PLayout, typename... IP>
-    void ParticleBase<PLayout, IP...>::unpackRecvs(mpi::comm_buffer_container& buf_list,
+    void ParticleBase<PLayout, IP...>::unpackRecvs(mpi_buffer_container& buf_list,
                                                    std::vector<int>& nRecvs) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             int i = 0;
@@ -332,7 +314,7 @@ namespace ippl {
                 forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
                     att->deserialize(*buf, nRecvs[i]);
                 });
-                Comm->freeBuffer(buf);
+                // Comm->freeBuffer(buf);
                 unpack(nRecvs[i]);
                 i++;
             }

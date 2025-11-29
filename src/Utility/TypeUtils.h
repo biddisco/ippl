@@ -404,17 +404,16 @@ namespace ippl {
          * Constructs a MultispaceContainer for all the available Kokkos memory spaces
          * @tparam Type the element type
          */
-        template <template <typename> class Type>
+        template <template <class> class ElemContainer>
         struct ContainerForAllSpaces {
-            template <typename... Spaces>
-            using container_type = MultispaceContainer<Type, Spaces...>;
+            template <class... Spaces>
+            using container_type = MultispaceContainer<ElemContainer, Spaces...>;
 
             using type = typename TypeForAllSpaces<container_type>::memory_spaces_type;
 
-            // Static factory function that takes a lambda to initialize each memory space
-            template <typename Functor>
+            template <class Functor>
             static type createContainer(Functor&& initFunc) {
-                return type{std::forward<Functor>(initFunc)};
+                return type(std::forward<Functor>(initFunc));
             }
         };
 

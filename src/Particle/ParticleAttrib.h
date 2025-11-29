@@ -46,6 +46,8 @@ namespace ippl {
 
         using size_type = detail::size_type;
 
+        using archive_type = Base::archive_type;
+
         // Create storage for M particle attributes.  The storage is uninitialized.
         // New items are appended to the end of the array.
         void create(size_type) override;
@@ -64,13 +66,9 @@ namespace ippl {
 
         void unpack(size_type) override;
 
-        void serialize(detail::Archive<memory_space>& ar, size_type nsends) override {
-            ar.serialize(buf_m, nsends);
-        }
+        void serialize(archive_type& ar, size_type nsends) { ar.serialize(buf_m, nsends); }
 
-        void deserialize(detail::Archive<memory_space>& ar, size_type nrecvs) override {
-            ar.deserialize(buf_m, nrecvs);
-        }
+        void deserialize(archive_type& ar, size_type nrecvs) { ar.deserialize(buf_m, nrecvs); }
 
         virtual ~ParticleAttrib() = default;
 

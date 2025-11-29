@@ -45,6 +45,18 @@ if("OPENMP" IN_LIST IPPL_PLATFORMS)
 endif()
 
 # ------------------------------------------------------------------------------
+# spdlog logging library
+# ------------------------------------------------------------------------------
+find_package(spdlog REQUIRED)
+colour_message(STATUS ${Green} "✅ spdlog found ${spdlog_VERSION}")
+
+# ------------------------------------------------------------------------------
+# fmt library (for formatting nice log messages)
+# ------------------------------------------------------------------------------
+find_package(fmt REQUIRED)
+colour_message(STATUS ${Green} "✅ fmt found ${fmt_VERSION}")
+
+# ------------------------------------------------------------------------------
 # Boost
 # ------------------------------------------------------------------------------
 find_package(Boost REQUIRED)

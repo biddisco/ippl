@@ -313,22 +313,11 @@ namespace ippl {
         void recvFromRank(int rank, int tag, size_type nRecvs);
 
         /*!
-         * Receives particles from another rank using async preposted receive buffers
-         * @param rank the source rank
-         * @param tag the MPI tag
-         * @param nRecvs the number of particles to receive
-         * @param requests A vector of MPI_requests that is filled with posted requests
-         * @param buf_list A container to hold buffers of received data used in each request
-         */
-        void irecvFromRank(int rank, int tag, size_type nRecvs, std::vector<MPI_Request>& requests,
-                           mpi::comm_buffer_container& buf_list);
-
-        /*!
          * Unpack data received in async irecvFromRank
          * @param nRecvs the number of particles to receive
          * @param buf_list A container of buffers of received data used in each request
          */
-        void unpackRecvs(mpi::comm_buffer_container& buf_list, std::vector<int>& nRecvs);
+        void unpackRecvs(mpi_buffer_container& buf_list, std::vector<int>& nRecvs);
 
         /*!
          * Serialize to do MPI calls.

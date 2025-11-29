@@ -8,8 +8,11 @@
 #include <memory>
 #include <mpi.h>
 
+#include "Utility/ViewUtils.h"
+#include "Utility/logging.h"
+
 #include "Communicate/BufferHandler.h"
-#include "Communicate/LoggingBufferHandler.h"
+// #include "Communicate/LoggingBufferHandler.h"
 #include "Communicate/Request.h"
 #include "Communicate/Status.h"
 
@@ -127,18 +130,23 @@ namespace ippl {
             void allreduce(T& inout, int count, Op op);
 
             /////////////////////////////////////////////////////////////////////////////////////
-            template <typename MemorySpace = Kokkos::DefaultExecutionSpace::memory_space>
-            using archive_type = detail::Archive<MemorySpace>;
+            // template <typename BufferType = ippl::detail::ViewType<
+            //               char, 1, Kokkos::DefaultExecutionSpace::memory_space>::view_type>
+            // using archive_type = detail::Archive<BufferType>;
 
-            template <typename MemorySpace = Kokkos::DefaultExecutionSpace::memory_space>
-            using buffer_type = std::shared_ptr<archive_type<MemorySpace>>;
+            // template <typename BufferType = ippl::detail::ViewType<
+            //               char, 1, Kokkos::DefaultExecutionSpace::memory_space>::view_type>
+            // using buffer_type = std::shared_ptr<archive_type<BufferType>>;
 
-        private:
+            // private:
             template <typename MemorySpace>
-            using buffer_container_type = LoggingBufferHandler<MemorySpace>;
+            using buffer_container_type = PoolBufferHandler<MemorySpace>;
 
             using buffer_handler_type =
                 typename detail::ContainerForAllSpaces<buffer_container_type>::type;
+
+            template <typename MemorySpace = Kokkos::DefaultExecutionSpace::memory_space>
+            using buffer_type = buffer_container_type<MemorySpace>::buffer_type;
 
         public:
             using size_type = detail::size_type;
@@ -169,19 +177,37 @@ namespace ippl {
                 }
                 MPI_Status status;
                 MPI_Recv(ar.getBuffer(), msize, MPI_BYTE, src, tag, *comm_m, &status);
-
                 buffer.deserialize(ar, nrecvs);
             }
 
             template <class Buffer, typename Archive>
             void isend(int dest, int tag, Buffer& buffer, Archive& ar, MPI_Request& request,
-                       size_type nsends) {
+                       size_type nsends)  //
+            {
                 if (ar.getSize() > INT_MAX) {
                     std::cerr << "Message size exceeds range of int" << std::endl;
                     this->abort();
                 }
                 buffer.serialize(ar, nsends);
+
+                // spdlog::critical("WIPING buf {}, size {:04}, dst {:02}, tag {:04}, req {}",
+                //                  (void*)(ar.getBuffer()), ar.getSize(), dest, tag,
+                //                  static_cast<uintptr_t>(request));
+
+                // using memory_space    = typename Archive::buffer_type::memory_space;
+                // using execution_space = Kokkos::DefaultExecutionSpace;
+                // using policy_type     = Kokkos::RangePolicy<execution_space>;
+                // Kokkos::parallel_for(
+                //     "clear", policy_type(0, ar.getBufferSize()),
+                //     KOKKOS_CLASS_LAMBDA(const size_t i) { ar.buffer_m(i) = tag; });
+                // Kokkos::fence();
+                // ippl::detail::write("halo send", this->rank(), ar.buffer_m,
+                //                     std::min(size_t(32), ar.getBufferSize()));
+
                 MPI_Isend(ar.getBuffer(), ar.getSize(), MPI_BYTE, dest, tag, *comm_m, &request);
+                spdlog::debug("Isend buf {}, size {:04}, dst {:02}, tag {:04}, req {}",
+                              (void*)(ar.getBuffer()), ar.getSize(), dest, tag,
+                              static_cast<uintptr_t>(request));
             }
 
             template <typename Archive>
@@ -190,16 +216,29 @@ namespace ippl {
                     std::cerr << "Message size exceeds range of int" << std::endl;
                     this->abort();
                 }
+
+                // using memory_space    = typename Archive::buffer_type::memory_space;
+                // using execution_space = typename Archive::buffer_type::execution_space;
+                // using policy_type     = Kokkos::RangePolicy<execution_space>;
+                // Kokkos::parallel_for(
+                //     "clear", policy_type(0, ar.getBufferSize()),
+                //     KOKKOS_CLASS_LAMBDA(const size_t i) { ar.buffer_m(i) = 0; });
+                // Kokkos::fence();
+
                 MPI_Irecv(ar.getBuffer(), msize, MPI_BYTE, src, tag, *comm_m, &request);
+                spdlog::debug("Irecv buf {}, size {:04}, src {:02}, tag {:04}, req {}",
+                              (void*)(ar.getBuffer()), msize, src, tag,
+                              static_cast<uintptr_t>(request));
             }
 
-            void printLogs(const std::string& filename);
+            // void printLogs(const std::string& filename);
 
         private:
-            std::vector<LogEntry> gatherLocalLogs();
-            void sendLogsToRank0(const std::vector<LogEntry>& localLogs);
-            std::vector<LogEntry> gatherLogsFromAllRanks(const std::vector<LogEntry>& localLogs);
-            void writeLogsToFile(const std::vector<LogEntry>& allLogs, const std::string& filename);
+            // std::vector<LogEntry> gatherLocalLogs();
+            // void sendLogsToRank0(const std::vector<LogEntry>& localLogs);
+            // std::vector<LogEntry> gatherLogsFromAllRanks(const std::vector<LogEntry>& localLogs);
+            // void writeLogsToFile(const std::vector<LogEntry>& allLogs, const std::string&
+            // filename);
 
             buffer_handler_type buffer_handlers_m;
 
@@ -212,6 +251,7 @@ namespace ippl {
             int size_m;
             int rank_m;
         };
+
     }  // namespace mpi
 }  // namespace ippl
 

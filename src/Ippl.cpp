@@ -14,6 +14,7 @@
 namespace ippl {
 
     void initialize(int& argc, char* argv[], MPI_Comm comm) {
+        Kokkos::initialize(argc, argv);
         Env = std::make_unique<mpi::Environment>(argc, argv, comm);
 
         Comm = std::make_unique<mpi::Communicator>(comm);
@@ -96,7 +97,7 @@ namespace ippl {
             std::exit(0);
         }
 
-        Kokkos::initialize(argc, argv);
+        // Kokkos::initialize(argc, argv);
     }
 
     void finalize() {

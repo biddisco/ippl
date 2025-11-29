@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Utility/IpplException.h"
+#include "Utility/logging.h"
 
 #include "Communicate/Communicator.h"
 
@@ -38,6 +39,7 @@ namespace ippl {
             using range_list    = typename Layout_t::neighbor_range_list;
 
             auto& comm = layout->comm;
+            spdlog::trace("Start exchangeBoundaries, {}", comm.rank());
 
             const neighbor_list& neighbors = layout->getNeighbors();
             const range_list &sendRanges   = layout->getNeighborsSendRange(),
@@ -63,24 +65,31 @@ namespace ippl {
                 sendRequests += componentNeighbors.size();
             }
 
-            int me = Comm->rank();
+            int me = comm.rank();
 
+            // ------------------------------------
+            // async MPI buffers and management
+            // ------------------------------------
             using memory_space = typename view_type::memory_space;
             using buffer_type  = mpi::Communicator::buffer_type<memory_space>;
-            std::vector<MPI_Request> send_requests(sendRequests);
-            std::vector<MPI_Request> recv_requests;
+            //
+            struct bc_irecv_data {
+                buffer_type async_buffer;
+                bound_type range;
+                int tag;
+                MPI_Request request;
+            };
 
-            constexpr size_t cubeCount = detail::countHypercubes(Dim) - 1;
+            std::vector<bc_irecv_data> send_requests;
+            std::vector<bc_irecv_data> recv_requests;
+            recv_requests.reserve(sendRequests);
+            send_requests.reserve(sendRequests);
 
             // ------------------------------------
             // pre-post receives loop
             // ------------------------------------
-            struct bc_irecv_data {
-                buffer_type pre_posted_recv_buf;
-                bound_type range;
-            };
-            std::vector<bc_irecv_data> pre_posted_bufs;
             //
+            constexpr size_t cubeCount = detail::countHypercubes(Dim) - 1;
             for (size_t index = 0; index < cubeCount; index++) {
                 int tag                        = mpi::tag::HALO + Layout_t::getMatchingIndex(index);
                 const auto& componentNeighbors = neighbors[index];
@@ -108,17 +117,16 @@ namespace ippl {
                     size_type nrecvs = range.size();
 
                     // std::cout << haloData_m.get_buffer();
-                    buffer_type buf = comm.template getBuffer<memory_space, T>(nrecvs);
-                    MPI_Request request;
+                    buffer_type buf     = comm.template getBuffer<memory_space, T>(nrecvs);
+                    MPI_Request request = MPI_REQUEST_NULL;
+
                     // comm.recv(sourceRank, tag, haloData_m, *buf, nrecvs * sizeof(T), nrecvs);
                     comm.irecv(sourceRank, tag, *buf, request, nrecvs * sizeof(T));
-                    pre_posted_bufs.push_back({buf, range});
-                    recv_requests.push_back(request);
+                    recv_requests.push_back({buf, range, tag, request});
                 }
             }
 
             // sending loop
-            size_t requestIndex = 0;
             for (size_t index = 0; index < cubeCount; index++) {
                 int tag                        = mpi::tag::HALO + index;
                 const auto& componentNeighbors = neighbors[index];
@@ -150,45 +158,80 @@ namespace ippl {
 
                     size_type nsends;
                     pack(range, view, haloData_m, nsends);
+                    // ippl::detail::write("halo bufferpack", comm.rank(), haloData_m.buffer, 32);
 
-                    buffer_type buf = comm.template getBuffer<memory_space, T>(nsends);
+                    buffer_type buf     = comm.template getBuffer<memory_space, T>(nsends);
+                    MPI_Request request = MPI_REQUEST_NULL;
+                    comm.isend(targetRank, tag, haloData_m, *buf, request, nsends);
+                    spdlog::info("halo serialized, {}", static_cast<uintptr_t>(request));
+                    // ippl::detail::write("halo serialized", comm.rank(), buf->buffer_m, 32);
+                    // buf->resetWritePos();
+                    send_requests.push_back({buf, {}, tag, request});
+                }
+            }
 
-                    comm.isend(targetRank, tag, haloData_m, *buf, send_requests[requestIndex++],
-                               nsends);
-                    buf->resetWritePos();
+            // ------------------------------------
+            // receive, then deserialize and unpack pre-posted receives
+            // ------------------------------------
+            if (recv_requests.size() > 0) {
+                bool redo = true;
+                while (redo) {
+                    redo = false;
+                    for (auto it = recv_requests.begin(); it != recv_requests.end(); ++it) {
+                        int flag = 0;
+                        MPI_Status status;
+                        spdlog::trace("iRecv MPI_Test, {} {}", comm.rank(),
+                                      static_cast<uintptr_t>(it->request));
+                        if (it->request != MPI_REQUEST_NULL) {
+                            spdlog::trace("MPI_Test recv tag {:04}, req {}", it->tag,
+                                          static_cast<uintptr_t>(it->request));
+                            auto old_request = it->request;
+                            MPI_Test(&it->request, &flag, &status);
+                            if (flag) {
+                                spdlog::debug("SUCCESS iRecv MPI_Test, {} {}", comm.rank(),
+                                              static_cast<uintptr_t>(old_request));
+                                it->request = MPI_REQUEST_NULL;
+                                haloData_m.deserialize(*(it->async_buffer), it->range.size());
+                                unpack<Op>(it->range, view, haloData_m);
+                                comm.template freeBuffer(it->async_buffer);
+                            } else {
+                                spdlog::trace("FAIL iRecv MPI_Test, {} {}", comm.rank(),
+                                              static_cast<uintptr_t>(it->request));
+                                redo = true;
+                            }
+                        }
+                    }
                 }
             }
 
             if (sendRequests > 0) {
-                // std::cout << "WaitAll for " << sendRequests << " " << send_requests.size()
-                //           << " buffers" << std::endl;
-                MPI_Waitall(sendRequests, send_requests.data(), MPI_STATUSES_IGNORE);
-            }
-
-            // ------------------------------------
-            // deserialize and unpack pre-posted receives
-            // ------------------------------------
-            if (pre_posted_bufs.size() > 0) {
-                // std::cout << "WaitAll for " << pre_posted_bufs.size() << " " <<
-                // recv_requests.size()
-                //           << " buffers" << std::endl;
-                MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
-                for (auto& bc_data : pre_posted_bufs) {
-                    haloData_m.deserialize(*bc_data.pre_posted_recv_buf, bc_data.range.size());
-                    unpack<Op>(bc_data.range, view, haloData_m);
-                    auto& my_view = bc_data.pre_posted_recv_buf->buffer_m;
-                    std::cout << "extent " << my_view.extent(0) << std::endl;
-                    // Use parallel_for to set all elements to 0
-                    Kokkos::parallel_for(
-                        "buffer clear", my_view.extent(0),
-                        KOKKOS_CLASS_LAMBDA(int i) { my_view(i) = 0; });
-                    Kokkos::fence();
-
-                    comm.template freeBuffer(bc_data.pre_posted_recv_buf);
+                bool redo = true;
+                while (redo) {
+                    redo = false;
+                    for (auto it = send_requests.begin(); it != send_requests.end(); ++it) {
+                        int flag = 0;
+                        MPI_Status status;
+                        // MPI_STATUS_IGNORE
+                        spdlog::trace("MPI_Test send tag {:04}, req {}", it->tag,
+                                      static_cast<uintptr_t>(it->request));
+                        if (it->request != MPI_REQUEST_NULL) {
+                            auto old_request = it->request;
+                            MPI_Test(&it->request, &flag, &status);
+                            if (flag) {
+                                spdlog::debug("SUCCESS iSend MPI_Test, {} {}", comm.rank(),
+                                              static_cast<uintptr_t>(old_request));
+                                it->request = MPI_REQUEST_NULL;
+                                comm.template freeBuffer(it->async_buffer);
+                            } else {
+                                spdlog::trace("FAIL iSend MPI_Test, {} {}", comm.rank(),
+                                              static_cast<uintptr_t>(it->request));
+                                redo = true;
+                            }
+                        }
+                    }
                 }
             }
-
-            // comm.freeAllBuffers();
+            spdlog::trace("End exchangeBoundaries, {}", comm.rank());
         }
 
         template <typename T, unsigned Dim, class... ViewArgs>

@@ -20,33 +20,32 @@
 //   exchanging particle data between ranks.
 //
 
-#include "Communicate/pool.h"
+#include "Utility/TypeUtils.h"
+#include "Utility/logging.h"
 
 namespace ippl {
     namespace mpi {
 
-        template <typename MemorySpace>
-        using comm_buff_type = std::shared_ptr<ippl::detail::Archive<MemorySpace>>;
+        // -----------------------------------
+        template <typename BufferType, typename T>
+        Communicator::buffer_type<BufferType> Communicator::getBuffer(size_type size,
+                                                                      double overallocation) {
+            using memory_space = BufferType::memory_space;
 
-        template <typename MemorySpace>
-        using comm_buff_list_type = std::vector<comm_buff_type<MemorySpace>>;
+            auto& buffer_handler = buffer_handlers_m.get<memory_space>();
 
-        using comm_buffer_container =
-            typename detail::ContainerForAllSpaces<comm_buff_list_type>::type;
-
-        template <typename MemorySpace, typename T>
-        Communicator::buffer_type<MemorySpace> Communicator::getBuffer(size_type size,
-                                                                       double overallocation) {
-            auto& buffer_handler = buffer_handlers_m.get<MemorySpace>();
-
-            return buffer_handler.getBuffer(size * sizeof(T),
-                                            std::max(overallocation, defaultOveralloc_m));
+            auto b = buffer_handler.getBuffer(size * sizeof(T),
+                                              std::max(overallocation, defaultOveralloc_m));
+            spdlog::info("{}, getBuffer {}, buf, {}, size {}", (void*)this,
+                         grox::debug::print_type<memory_space>(), (void*)(b->getBuffer()), size);
+            return b;
         }
 
-        template <typename MemorySpace>
-        void Communicator::freeBuffer(Communicator::buffer_type<MemorySpace> buffer) {
-            auto& buffer_handler = buffer_handlers_m.get<MemorySpace>();
-
+        template <typename BufferType>
+        void Communicator::freeBuffer(Communicator::buffer_type<BufferType> buffer) {
+            using memory_space   = BufferType::memory_space;
+            auto& buffer_handler = buffer_handlers_m.get<memory_space>();
+            spdlog::info("freeBuffer buf, {}", (void*)(buffer->getBuffer()));
             buffer_handler.freeBuffer(buffer);
         }
 
