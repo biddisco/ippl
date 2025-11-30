@@ -211,8 +211,9 @@ namespace ippl::communication_pool {
 #endif
             assert(ChunkSize == region->get_size());
             if (!free_list_.push(region)) {
-                SPDLOG_ERROR("[{:6}] {}  Error in memory pool push", PoolType::desc(),
-                             grox::debug::print_type<typename RegionProvider::memory_space>());
+                SPDLOG_ERROR("[{:6}] {} Error in memory pool push {}", PoolType::desc(),
+                             grox::debug::print_type<typename RegionProvider::memory_space>(),
+                             *region);
             }
             // decrement one reference
             --in_use_;

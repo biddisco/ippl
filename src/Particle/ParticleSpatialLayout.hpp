@@ -222,8 +222,8 @@ namespace ippl {
             //
             hash_type hash("hash", rankSendCount_hview(rank));
             fillHash(rank, particleRanks, hash);
-
-            // pc.sendToRank(rank, tag, send_requests, hash);
+            MPI_Request request;
+            pc.sendToRank(rank, tag, request, hash);
         }
 
         IpplTimings::stopTimer(sendTimer);

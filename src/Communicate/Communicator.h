@@ -190,9 +190,9 @@ namespace ippl {
                 }
                 buffer.serialize(ar, nsends);
 
-                // spdlog::critical("WIPING buf {}, size {:04}, dst {:02}, tag {:04}, req {}",
-                //                  (void*)(ar.getBuffer()), ar.getSize(), dest, tag,
-                //                  static_cast<uintptr_t>(request));
+                spdlog::critical("WIPING buf {}, size {:04}, dst {:02}, tag {:04}, req {}",
+                                 (void*)(ar.getBuffer()), ar.getSize(), dest, tag,
+                                 static_cast<uintptr_t>(request));
 
                 // using memory_space    = typename Archive::buffer_type::memory_space;
                 // using execution_space = Kokkos::DefaultExecutionSpace;

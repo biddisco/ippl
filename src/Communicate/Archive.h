@@ -29,10 +29,10 @@ namespace ippl {
         class Archive {
         public:
             using buffer_type  = BufferType;
-            using pointer_type = typename BufferType::pointer_type;
+            using pointer_type = typename buffer_type::pointer_type;
 
             Archive(size_type size = 0);
-            Archive(BufferType other_buf);
+            Archive(BufferType* other_buf);
 
             /*!
              * Serialize.
@@ -74,14 +74,14 @@ namespace ippl {
             /*!
              * @returns a pointer to the data of the buffer
              */
-            pointer_type getBuffer() { return buffer_m.data(); }
+            pointer_type getBuffer() { return buffer_m->data(); }
 
             /*!
              * @returns the size of the buffer
              */
             size_type getSize() const { return writepos_m; }
 
-            size_type getBufferSize() const { return buffer_m.size(); }
+            size_type getBufferSize() const { return buffer_m->size(); }
 
             void resizeBuffer(size_type size) {
                 std::cout << "Resizing to " << size << std::endl;
@@ -89,7 +89,7 @@ namespace ippl {
                 Kokkos::resize(buffer_m, size);
             }
 
-            void reallocBuffer(size_type size) { Kokkos::realloc(buffer_m, size); }
+            // void reallocBuffer(size_type size) { Kokkos::realloc(buffer_m, size); }
 
             void resetWritePos() { writepos_m = 0; }
             void resetReadPos() { readpos_m = 0; }
@@ -102,7 +102,7 @@ namespace ippl {
             //! read position for deserialization
             size_type readpos_m;
             //! serialized data
-            BufferType buffer_m;
+            BufferType* buffer_m;
         };
     }  // namespace detail
 }  // namespace ippl

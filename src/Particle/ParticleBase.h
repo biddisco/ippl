@@ -301,8 +301,7 @@ namespace ippl {
          * @param hash a hash view indicating which particles need to be sent to which rank
          */
         template <typename HashType>
-        void sendToRank(int rank, int tag, std::vector<MPI_Request>& requests,
-                        const HashType& hash);
+        void sendToRank(int rank, int tag, MPI_Request& request, const HashType& hash);
 
         /*!
          * Receives particles from another rank

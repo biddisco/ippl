@@ -432,9 +432,7 @@ namespace ippl {
         using typename BufferHandler<typename rma_archive<rma_buffer<MemorySpace>>::type,
                                      MemorySpace>::size_type;
 
-        static inline std::vector<
-            communication_pool::rma_memory_region<Kokkos_Provider<MemorySpace>>*>
-            buffers_in_use;
+        static inline std::vector<region_type*> buffers_in_use;
 
         PoolBufferHandler() {};
         ~PoolBufferHandler() override {};
@@ -447,7 +445,7 @@ namespace ippl {
 
             buffers_in_use.push_back(buff);
 
-            return std::make_shared<archive_type>(*buff);
+            return std::make_shared<archive_type>(buff);
         }
 
         /**
@@ -460,12 +458,18 @@ namespace ippl {
          */
         virtual void freeBuffer(buffer_type buffer) override {  //
             if constexpr (std::is_same_v<MemorySpace, typename region_type::memory_space>) {
-                auto buff = &buffer->buffer_m;
+                auto buff = buffer->buffer_m;
                 _pool->deallocate(buff);
+                SPDLOG_TRACE("freeBuffer {} buffers_in_use before erase {}, {}", (void*)buff,
+                             buffers_in_use.size(), *buff);
+                for (auto buf : buffers_in_use) {
+                    std::cout << (void*)buf << std::endl;
+                }
                 buffers_in_use.erase(
                     std::remove(buffers_in_use.begin(), buffers_in_use.end(), buff),
                     buffers_in_use.end());
             }
+            SPDLOG_TRACE("freeBuffer - size after erase {}", buffers_in_use.size());
         }
 
         /**
@@ -476,9 +480,12 @@ namespace ippl {
          */
         virtual void freeAllBuffers() override {
             //
+            SPDLOG_TRACE("freeAllBuffers");
             for (auto buff : buffers_in_use) {
+                SPDLOG_TRACE("deallocate {}", *buff);
                 _pool->deallocate(buff);
             }
+            buffers_in_use.clear();
         }
 
         /**

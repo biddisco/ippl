@@ -162,6 +162,17 @@ namespace ippl {
 
                     buffer_type buf     = comm.template getBuffer<memory_space, T>(nsends);
                     MPI_Request request = MPI_REQUEST_NULL;
+
+                    T* device_ptr = (T*)(buf->buffer_m->data());
+
+                    // using memory_space    =     typename Archive::buffer_type::memory_space;
+                    using execution_space = Kokkos::DefaultExecutionSpace;
+                    using policy_type     = Kokkos::RangePolicy<execution_space>;
+                    Kokkos::parallel_for(
+                        "clear", policy_type(0, buf->getBufferSize()),
+                        KOKKOS_CLASS_LAMBDA(const size_t i) { device_ptr[i] = tag; });
+                    Kokkos::fence();
+
                     comm.isend(targetRank, tag, haloData_m, *buf, request, nsends);
                     spdlog::info("halo serialized, {}", static_cast<uintptr_t>(request));
                     // ippl::detail::write("halo serialized", comm.rank(), buf->buffer_m, 32);

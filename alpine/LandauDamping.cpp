@@ -44,7 +44,7 @@ const char* TestName   = "LandauDamping";
 
 int main(int argc, char* argv[]) {
     spdlog::set_pattern("[%^%-8l%$]%t| %v");
-    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_level(spdlog::level::trace);
     ippl::initialize(argc, argv);
     {
         Inform msg(TestName);

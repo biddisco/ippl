@@ -13,10 +13,10 @@ namespace ippl {
         Archive<BufferType>::Archive(size_type size)
             : writepos_m(0)
             , readpos_m(0)
-            , buffer_m("buffer", size) {}
+            , buffer_m(nullptr) {}
 
         template <typename BufferType>
-        Archive<BufferType>::Archive(BufferType other_buf)
+        Archive<BufferType>::Archive(BufferType* other_buf)
             : writepos_m(0)
             , readpos_m(0) {
             buffer_m = other_buf;
@@ -29,11 +29,12 @@ namespace ippl {
             using exec_space  = typename Kokkos::View<T*, ViewArgs...>::execution_space;
             using policy_type = Kokkos::RangePolicy<exec_space>;
 
-            size_t size = sizeof(T);
+            size_t size   = sizeof(T);
+            T* device_ptr = (T*)(buffer_m->data());
             Kokkos::parallel_for(
                 "Archive::serialize()", policy_type(0, nsends),
                 KOKKOS_CLASS_LAMBDA(const size_type i) {
-                    std::memcpy(buffer_m.data() + i * size + writepos_m, view.data() + i, size);
+                    std::memcpy(device_ptr + (i * size) + writepos_m, view.data() + i, size);
                 });
             Kokkos::fence();
             writepos_m += size * nsends;
@@ -45,7 +46,8 @@ namespace ippl {
                                             size_type nsends) {
             using exec_space = typename Kokkos::View<T*, ViewArgs...>::execution_space;
 
-            size_t size = sizeof(T);
+            size_t size   = sizeof(T);
+            T* device_ptr = (T*)(buffer_m->data());
             // Default index type for range policies is int64,
             // so we have to explicitly specify size_type (uint64)
             using mdrange_t =
@@ -58,7 +60,7 @@ namespace ippl {
                 // to avoid compiler warnings
                 mdrange_t({0, 0}, {(long int)nsends, Dim}),
                 KOKKOS_CLASS_LAMBDA(const size_type i, const size_t d) {
-                    std::memcpy(buffer_m.data() + (Dim * i + d) * size + writepos_m,
+                    std::memcpy(device_ptr + (Dim * i + d) * size + writepos_m,
                                 &(*(view.data() + i))[d], size);
                 });
             Kokkos::fence();
@@ -72,14 +74,15 @@ namespace ippl {
             using exec_space  = typename Kokkos::View<T*, ViewArgs...>::execution_space;
             using policy_type = Kokkos::RangePolicy<exec_space>;
 
-            size_t size = sizeof(T);
+            size_t size   = sizeof(T);
+            T* device_ptr = (T*)(buffer_m->data());
             if (nrecvs > view.extent(0)) {
                 Kokkos::realloc(view, nrecvs);
             }
             Kokkos::parallel_for(
                 "Archive::deserialize()", policy_type(0, nrecvs),
                 KOKKOS_CLASS_LAMBDA(const size_type i) {
-                    std::memcpy(view.data() + i, buffer_m.data() + i * size + readpos_m, size);
+                    std::memcpy(view.data() + i, device_ptr + (i * size) + readpos_m, size);
                 });
             // Wait for deserialization kernel to complete
             // (as with serialization kernels)
@@ -93,7 +96,8 @@ namespace ippl {
                                               size_type nrecvs) {
             using exec_space = typename Kokkos::View<T*, ViewArgs...>::execution_space;
 
-            size_t size = sizeof(T);
+            size_t size   = sizeof(T);
+            T* device_ptr = (T*)(buffer_m->data());
             if (nrecvs > view.extent(0)) {
                 Kokkos::realloc(view, nrecvs);
             }
@@ -103,7 +107,7 @@ namespace ippl {
                 "Archive::deserialize()", mdrange_t({0, 0}, {(long int)nrecvs, Dim}),
                 KOKKOS_CLASS_LAMBDA(const size_type i, const size_t d) {
                     std::memcpy(&(*(view.data() + i))[d],
-                                buffer_m.data() + (Dim * i + d) * size + readpos_m, size);
+                                device_ptr + (Dim * i + d) * size + readpos_m, size);
                 });
             Kokkos::fence();
             readpos_m += Dim * size * nrecvs;

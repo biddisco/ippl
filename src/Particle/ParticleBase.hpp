@@ -268,11 +268,9 @@ namespace ippl {
 
     template <class PLayout, typename... IP>
     template <typename HashType>
-    void ParticleBase<PLayout, IP...>::sendToRank(int rank, int tag,
-                                                  std::vector<MPI_Request>& requests,
+    void ParticleBase<PLayout, IP...>::sendToRank(int rank, int tag, MPI_Request& request,
                                                   const HashType& hash) {
         size_type nSends = hash.size();
-        requests.resize(requests.size() + 1);
 
         auto hashes = hash_container_type(hash, [&]<typename MemorySpace>() {
             return attributes_m.template get<MemorySpace>().size() > 0;
@@ -283,7 +281,7 @@ namespace ippl {
             if (bufSize == 0)
                 return;
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
-            Comm->isend(rank, tag++, *this, *buf, requests.back(), nSends);
+            Comm->isend(rank, tag++, *this, *buf, request, nSends);
             buf->resetWritePos();
         });
     }
