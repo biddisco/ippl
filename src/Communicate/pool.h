@@ -31,15 +31,17 @@
 #include "Communicate/simple_counter.hpp"
 
 // default memory chunk sizes in bytes  1 * 0x0400 = 1KB
-#define RDMA_POOL_1K_CHUNK_SIZE     0x001 * 0x0400  //  1KB
-#define RDMA_POOL_SMALL_CHUNK_SIZE  0x010 * 0x0400  // 16KB
-#define RDMA_POOL_MEDIUM_CHUNK_SIZE 0x040 * 0x0400  // 64KB
-#define RDMA_POOL_LARGE_CHUNK_SIZE  0x400 * 0x0400  //  1MB
+#define KB_1                        0x000400
+#define MB_1                        0x100000
+#define RDMA_POOL_1K_CHUNK_SIZE     0x001 * KB_1  //  1KB
+#define RDMA_POOL_SMALL_CHUNK_SIZE  0x010 * KB_1  // 16KB
+#define RDMA_POOL_MEDIUM_CHUNK_SIZE 0x001 * MB_1  //  1MB
+#define RDMA_POOL_LARGE_CHUNK_SIZE  0x010 * MB_1  // 16MB
 
-#define RDMA_POOL_MAX_1K_CHUNKS     256
+#define RDMA_POOL_MAX_1K_CHUNKS     128
 #define RDMA_POOL_MAX_SMALL_CHUNKS  32
-#define RDMA_POOL_MAX_MEDIUM_CHUNKS 2
-#define RDMA_POOL_MAX_LARGE_CHUNKS  1
+#define RDMA_POOL_MAX_MEDIUM_CHUNKS 8
+#define RDMA_POOL_MAX_LARGE_CHUNKS  8
 
 // Description of memory pool objects:
 //

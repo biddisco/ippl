@@ -123,6 +123,7 @@ void solver_send(int TAG, int id, int i, const ippl::NDIndex<Dim> intersection,
 
     int tag = TAG + id;
 
+    throw std::runtime_error("Fix this JB");
     ippl::Comm->isend(i, tag, fd, *buf, requests.back(), nsends);
     buf->resetWritePos();
 }

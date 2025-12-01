@@ -47,7 +47,8 @@ namespace ippl {
     template <typename MemorySpace>
     using rma_buffer = communication_pool::rma_memory_region<Kokkos_Provider<MemorySpace>>;
 
-    // archive wrapper around an arbitrary buffer
+    // ---------------------------------------------
+    // archive wrapper around some arbitrary buffer
     template <typename BufferType>
     struct rma_archive {
         using type = detail::Archive<BufferType>;
@@ -55,42 +56,38 @@ namespace ippl {
 
     // shared pointer wrapper around an archive wrapper
     template <typename BufferType>
-    struct comm_buff_type {
+    struct rma_shared_archive {
         using type = std::shared_ptr<typename rma_archive<BufferType>::type>;
     };
 
-    // buffer per MemorySpace
-    template <typename MemorySpace>
-    struct mpi_comm_buff {
-        using type = rma_buffer<MemorySpace>;
+    // bind the buffer type to the shared archive so we can access with just a memory space
+    template <template <typename> class BufferType>
+    struct rma_shared_archive_binder {
+        template <typename MemorySpace>
+        using apply = typename rma_shared_archive<BufferType<MemorySpace>>::type;
     };
 
+    // wrap the bound buffer type in a container for all spaces
+    template <template <typename> class BufferType>
+    using rma_shared_archive_for_all_spaces = typename detail::ContainerForAllSpaces<
+        rma_shared_archive_binder<BufferType>::template apply>::type;
+
+    // a container we can access with just the memoryspace
+    using mpi_comm_buffer_for_all_spaces = rma_shared_archive_for_all_spaces<rma_buffer>;
+
+    // ---------------------------------------------
     // vector per MemorySpace
     template <template <typename> class BufferType, typename MemorySpace>
     struct comm_buff_vector_for_space {
-        using type = std::vector<typename comm_buff_type<BufferType<MemorySpace>>::type>;
+        using type = std::vector<typename rma_shared_archive<BufferType<MemorySpace>>::type>;
     };
 
-    // // binder to convert 2-param template to 1-param
-    // template <template <typename> class BufferType>
-    // struct comm_buff_vector_binder {
-    //     template <typename MemorySpace>
-    //     struct apply {
-    //         using type = typename comm_buff_vector_for_space<BufferType, MemorySpace>::type;
-    //     };
-    // };
-
+    // bind the buffer type to the template so we can access using just a memory space template
     template <template <typename> class BufferType>
     struct comm_buff_vector_binder {
         template <typename MemorySpace>
         using apply = typename comm_buff_vector_for_space<BufferType, MemorySpace>::type;
     };
-
-    // // ContainerForAllSpaces fake
-    // template <template <typename> class PerSpaceTemplate>
-    // struct ContainerForAllSpaces {
-    //     using type = int;  // just for demonstration
-    // };
 
     // alias template for all spaces
     template <template <typename> class BufferType>
@@ -428,7 +425,7 @@ namespace ippl {
     public:
         using region_type  = rma_buffer<MemorySpace>;
         using archive_type = rma_archive<rma_buffer<MemorySpace>>::type;
-        using buffer_type  = comm_buff_type<rma_buffer<MemorySpace>>::type;
+        using buffer_type  = rma_shared_archive<rma_buffer<MemorySpace>>::type;
         using typename BufferHandler<typename rma_archive<rma_buffer<MemorySpace>>::type,
                                      MemorySpace>::size_type;
 

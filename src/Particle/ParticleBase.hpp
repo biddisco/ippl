@@ -268,7 +268,8 @@ namespace ippl {
 
     template <class PLayout, typename... IP>
     template <typename HashType>
-    void ParticleBase<PLayout, IP...>::sendToRank(int rank, int tag, MPI_Request& request,
+    void ParticleBase<PLayout, IP...>::sendToRank(mpi_comm_buffer_for_all_spaces& buffs, int rank,
+                                                  int tag, MPI_Request& request,
                                                   const HashType& hash) {
         size_type nSends = hash.size();
 
@@ -283,6 +284,7 @@ namespace ippl {
             auto buf = Comm->getBuffer<MemorySpace>(bufSize);
             Comm->isend(rank, tag++, *this, *buf, request, nSends);
             buf->resetWritePos();
+            buffs.template get<MemorySpace>() = buf;
         });
     }
 
@@ -316,6 +318,18 @@ namespace ippl {
                 unpack(nRecvs[i]);
                 i++;
             }
+        });
+    }
+
+    template <class PLayout, typename... IP>
+    void ParticleBase<PLayout, IP...>::unpackRecv(mpi_comm_buffer_for_all_spaces mbuf, int N) {
+        detail::runForAllSpaces([&]<typename MemorySpace>() {
+            auto buf = mbuf.get<MemorySpace>();
+            buf->resetReadPos();
+            forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
+                att->deserialize(*buf, N);
+            });
+            unpack(N);
         });
     }
 

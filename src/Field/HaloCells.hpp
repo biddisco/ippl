@@ -73,15 +73,15 @@ namespace ippl {
             using memory_space = typename view_type::memory_space;
             using buffer_type  = mpi::Communicator::buffer_type<memory_space>;
             //
-            struct bc_irecv_data {
+            struct async_recv_data {
                 buffer_type async_buffer;
                 bound_type range;
                 int tag;
                 MPI_Request request;
             };
 
-            std::vector<bc_irecv_data> send_requests;
-            std::vector<bc_irecv_data> recv_requests;
+            std::vector<async_recv_data> recv_requests;
+            std::vector<mpi::Communicator::async_send_data<memory_space>> send_requests;
             recv_requests.reserve(sendRequests);
             send_requests.reserve(sendRequests);
 
@@ -177,7 +177,7 @@ namespace ippl {
                     spdlog::info("halo serialized, {}", static_cast<uintptr_t>(request));
                     // ippl::detail::write("halo serialized", comm.rank(), buf->buffer_m, 32);
                     // buf->resetWritePos();
-                    send_requests.push_back({buf, {}, tag, request});
+                    send_requests.push_back({buf, tag, request});
                 }
             }
 

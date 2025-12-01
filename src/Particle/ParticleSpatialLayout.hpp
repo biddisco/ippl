@@ -58,9 +58,9 @@ namespace ippl {
         }
     };
 
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
-    ParticleSpatialLayout<T, Dim, Mesh, Properties...>::ParticleSpatialLayout(FieldLayout<Dim>& fl,
-                                                                              Mesh& mesh)
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
+    ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::ParticleSpatialLayout(
+        FieldLayout<Dim>& fl, Mesh& mesh)
         : rlayout_m(fl, mesh)
         , flayout_m(fl) {
         nRecvs_m.resize(Comm->size());
@@ -69,16 +69,16 @@ namespace ippl {
         }
     }
 
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
-    void ParticleSpatialLayout<T, Dim, Mesh, Properties...>::updateLayout(FieldLayout<Dim>& fl,
-                                                                          Mesh& mesh) {
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
+    void ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::updateLayout(
+        FieldLayout<Dim>& fl, Mesh& mesh) {
         // flayout_m = fl;
         rlayout_m.changeDomain(fl, mesh);
     }
 
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
     template <class ParticleContainer>
-    void ParticleSpatialLayout<T, Dim, Mesh, Properties...>::update(ParticleContainer& pc) {
+    void ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::update(ParticleContainer& pc) {
         /* Apply Boundary Conditions */
         static IpplTimings::TimerRef ParticleBCTimer = IpplTimings::getTimer("particleBC");
         IpplTimings::startTimer(ParticleBCTimer);
@@ -177,11 +177,10 @@ namespace ippl {
         // ----------------------------------
         int tag            = Comm->next_tag(mpi::tag::P_SPATIAL_LAYOUT, mpi::tag::P_LAYOUT_CYCLE);
         using memory_space = position_memory_space;
-        using buffer_type  = mpi::Communicator::buffer_type<memory_space>;
         struct async_data {
-            buffer_type async_buffer;
+            mpi_comm_buffer_for_all_spaces async_buffer;
             int tag;
-            size_type nRecvs;
+            size_type N;
             MPI_Request request;
         };
         std::vector<async_data> send_requests;
@@ -198,13 +197,24 @@ namespace ippl {
         IpplTimings::startTimer(precvTimer);
 
         for (int rank = 0; rank < nRanks; ++rank) {
+            // strictly speaking this code chunk should use runForAllSpaces
+            // and use a list of recv buffers - one for each space
+            SPDLOG_DEBUG("num Recvs from {} to {} = {}", Comm->rank(), rank, nRecvs_m[rank]);
             if (nRecvs_m[rank] > 0) {
-                size_type bufSize = pc.template packedSize<memory_space>(nRecvs_m[rank]);
-                SPDLOG_DEBUG("bufSize {} {}", bufSize, grox::debug::print_type<memory_space>());
-                auto buf            = Comm->template getBuffer<memory_space>(bufSize);
-                MPI_Request request = MPI_REQUEST_NULL;
-                Comm->irecv(rank, tag, *buf, request, bufSize);
-                recv_requests.push_back({buf, tag, nRecvs_m[rank], request});
+                mpi_comm_buffer_for_all_spaces async_buffers_per_space;
+                // detail::runForAllSpaces([&]<typename MemorySpace>() {
+                using MemorySpace = memory_space;
+                size_type bufSize = pc.template packedSize<MemorySpace>(nRecvs_m[rank]);
+                if (bufSize > 0) {
+                    SPDLOG_DEBUG("bufSize {} {}", bufSize, grox::debug::print_type<memory_space>());
+                    auto buf            = Comm->template getBuffer<MemorySpace>(bufSize);
+                    MPI_Request request = MPI_REQUEST_NULL;
+                    Comm->irecv(rank, tag, *buf, request, bufSize);
+                    async_buffers_per_space.get<MemorySpace>() = buf;
+                    recv_requests.push_back(
+                        {async_buffers_per_space, tag, nRecvs_m[rank], request});
+                }
+                // });
             }
         }
         IpplTimings::stopTimer(precvTimer);
@@ -223,7 +233,9 @@ namespace ippl {
             hash_type hash("hash", rankSendCount_hview(rank));
             fillHash(rank, particleRanks, hash);
             MPI_Request request;
-            pc.sendToRank(rank, tag, request, hash);
+            mpi_comm_buffer_for_all_spaces buffs;
+            pc.sendToRank(buffs, rank, tag, request, hash);
+            send_requests.push_back({buffs, tag, 0, request});
         }
 
         IpplTimings::stopTimer(sendTimer);
@@ -245,7 +257,41 @@ namespace ippl {
         static IpplTimings::TimerRef sendWaitTimer = IpplTimings::getTimer("particleSendWait");
         IpplTimings::startTimer(sendWaitTimer);
         if (send_requests.size() > 0) {
-            // MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
+            // strictly speaking this code chunk should use runForAllSpaces
+            // and use a list of recv buffers - one for each space
+            bool redo = true;
+            while (redo) {
+                redo = false;
+                for (auto it = send_requests.begin(); it != send_requests.end(); ++it) {
+                    int flag = 0;
+                    MPI_Status status;
+                    spdlog::trace("iSend MPI_Test, {} {}", Comm->rank(),
+                                  static_cast<uintptr_t>(it->request));
+                    if (it->request != MPI_REQUEST_NULL) {
+                        spdlog::trace("MPI_Test send tag {:04}, req {}", it->tag,
+                                      static_cast<uintptr_t>(it->request));
+                        auto old_request = it->request;
+                        MPI_Test(&it->request, &flag, &status);
+                        if (flag) {
+                            spdlog::debug("SUCCESS iSend MPI_Test, {} {}", Comm->rank(),
+                                          static_cast<uintptr_t>(old_request));
+                            it->request = MPI_REQUEST_NULL;
+                            detail::runForAllSpaces([&]<typename MemorySpace>() {
+                                auto buf = it->async_buffer.template get<MemorySpace>();
+                                spdlog::debug("SUCCESS iSend MPI_Test, {} {} {}", Comm->rank(),
+                                              static_cast<uintptr_t>(old_request),
+                                              grox::debug::print_type<decltype(buf)>());
+                                // if (std::is_same_v<memory_space, MemorySpace>)
+                                //     Comm->template freeBuffer(*buf);
+                            });
+                        } else {
+                            spdlog::trace("FAIL iSend MPI_Test, {} {}", Comm->rank(),
+                                          static_cast<uintptr_t>(it->request));
+                            redo = true;
+                        }
+                    }
+                }
+            }
         }
         IpplTimings::stopTimer(sendWaitTimer);
 
@@ -255,17 +301,19 @@ namespace ippl {
         static IpplTimings::TimerRef recvWaitTimer = IpplTimings::getTimer("particleRecvWait");
         IpplTimings::startTimer(recvWaitTimer);
         if (recv_requests.size() > 0) {
+            // strictly speaking this code chunk should use runForAllSpaces
+            // and use a list of recv buffers - one for each space
             bool redo = true;
             while (redo) {
                 redo = false;
                 for (auto it = recv_requests.begin(); it != recv_requests.end(); ++it) {
                     int flag = 0;
                     MPI_Status status;
-                    spdlog::trace("iRecv MPI_Test, {} {}", Comm->rank(),
-                                  static_cast<uintptr_t>(it->request));
+                    // spdlog::trace("iRecv MPI_Test, {} {}", Comm->rank(),
+                    //               static_cast<uintptr_t>(it->request));
                     if (it->request != MPI_REQUEST_NULL) {
-                        spdlog::trace("MPI_Test recv tag {:04}, req {}", it->tag,
-                                      static_cast<uintptr_t>(it->request));
+                        // spdlog::trace("MPI_Test recv tag {:04}, req {}", it->tag,
+                        //               static_cast<uintptr_t>(it->request));
                         auto old_request = it->request;
                         MPI_Test(&it->request, &flag, &status);
                         if (flag) {
@@ -273,46 +321,44 @@ namespace ippl {
                                           static_cast<uintptr_t>(old_request));
                             it->request = MPI_REQUEST_NULL;
 
-                            // detail::runForAllSpaces([&]<typename memory_space>() {
-                            //     for (auto buf : it->async_buffer.template get<memory_space>()) {
-                            //         buf->resetReadPos();
-                            //         forAllAttributes<memory_space>(
-                            //             [&]<typename Attribute>(Attribute& att) {
-                            //                 att->deserialize(*(it->async_buffer), it->nRecvs);
-                            //             });
-                            //         // Comm->freeBuffer(buf);
-                            //         unpack(it->nRecvs);
-                            //     }
-                            // });
-
-                            Comm->template freeBuffer(it->async_buffer);
+                            pc.unpackRecv(it->async_buffer, it->N);
+                            detail::runForAllSpaces([&]<typename MemorySpace>() {
+                                auto buf = it->async_buffer.template get<MemorySpace>();
+                                spdlog::debug("SUCCESS iRecv MPI_Test, {} {} {}", Comm->rank(),
+                                              static_cast<uintptr_t>(old_request),
+                                              grox::debug::print_type<decltype(buf)>());
+                                // if (std::is_same_v<memory_space, MemorySpace>)
+                                // Comm->template freeBuffer(buf);
+                            });
 
                         } else {
-                            spdlog::trace("FAIL iRecv MPI_Test, {} {}", Comm->rank(),
-                                          static_cast<uintptr_t>(it->request));
+                            // spdlog::trace("FAIL iRecv MPI_Test, {} {}", Comm->rank(),
+                            //               static_cast<uintptr_t>(it->request));
                             redo = true;
                         }
                     }
                 }
             }
-
-            // std::cout << "WaitAll for " << pre_posted_bufs.size() << " " <<
-            // recv_requests.size()
-            //           << " buffers" << std::endl;
-            // MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
+        } else {
+            spdlog::debug("Warning: recv_requests.size() {} {}", Comm->rank(),
+                          recv_requests.size());
         }
 
-        IpplTimings::stopTimer(recvWaitTimer);
+        // ----------------------------------
 
         // ----------------------------------
         // 4.3 Unpack Received Particles
         // ----------------------------------
-        static IpplTimings::TimerRef unpackTimer = IpplTimings::getTimer("particleUnpack");
-        IpplTimings::startTimer(unpackTimer);
-        // pc.unpackRecvs(pre_posted_bufs, nRecvs);
-        IpplTimings::stopTimer(unpackTimer);
+        // static IpplTimings::TimerRef unpackTimer = IpplTimings::getTimer("particleUnpack");
+        // IpplTimings::startTimer(unpackTimer);
+        // auto temp = Comm->template getBuffer<memory_space>(1234);
+        // mpi_buffer_container pre_posted_bufs;
+        // pre_posted_bufs.get<memory_space>().push_back(temp);
+        // std::vector<int> nRecvsxx;
+        // pc.unpackRecvs(pre_posted_bufs, nRecvsxx);
+        // IpplTimings::stopTimer(unpackTimer);
 
-        static int iteration = 0;
+        // static int iteration = 0;
         // Comm->printLogs("commlogs_" + std::to_string(iteration++) + ".txt");
         if (Comm->rank() == 0) {
             // std::cout << "buffers_in_existence " << buffers_in_existence << std::endl;
@@ -320,10 +366,10 @@ namespace ippl {
         IpplTimings::stopTimer(ParticleUpdateTimer);
     }
 
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
     template <size_t... Idx>
     KOKKOS_INLINE_FUNCTION constexpr bool
-    ParticleSpatialLayout<T, Dim, Mesh, Properties...>::positionInRegion(
+    ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::positionInRegion(
         const std::index_sequence<Idx...>&, const vector_type& pos, const region_type& region) {
         return ((pos[Idx] > region[Idx].min()) && ...) && ((pos[Idx] <= region[Idx].max()) && ...);
     };
@@ -331,8 +377,8 @@ namespace ippl {
     /* Helper function that evaluates the total number of neighbors for the current rank in Dim
      * dimensions.
      */
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
-    detail::size_type ParticleSpatialLayout<T, Dim, Mesh, Properties...>::getNeighborSize(
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
+    detail::size_type ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::getNeighborSize(
         const neighbor_list& neighbors) const {
         size_type totalSize = 0;
 
@@ -360,10 +406,10 @@ namespace ippl {
      *
      * @return tuple with the number of particles sent away and the number of ranks sent to
      */
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
     template <typename ParticleContainer>
     std::pair<detail::size_type, detail::size_type>
-    ParticleSpatialLayout<T, Dim, Mesh, Properties...>::locateParticles(
+    ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::locateParticles(
         const ParticleContainer& pc, locate_type& ranks, bool_type& invalid,
         locate_type& nSends_dview, locate_type& sends_dview) const {
         auto positions           = pc.R.getView();
@@ -521,10 +567,9 @@ namespace ippl {
         return {invalidCount, temp};
     }
 
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
-    void ParticleSpatialLayout<T, Dim, Mesh, Properties...>::fillHash(int rank,
-                                                                      const locate_type& ranks,
-                                                                      hash_type& hash) {
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
+    void ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::fillHash(
+        int rank, const locate_type& ranks, hash_type& hash) {
         /* Compute the prefix sum and fill the hash
          */
         using policy_type = Kokkos::RangePolicy<position_execution_space>;
@@ -544,8 +589,8 @@ namespace ippl {
         Kokkos::fence();
     }
 
-    template <typename T, unsigned Dim, class Mesh, typename... Properties>
-    size_t ParticleSpatialLayout<T, Dim, Mesh, Properties...>::numberOfSends(
+    template <typename T, unsigned Dim, class Mesh, typename... PositionProperties>
+    size_t ParticleSpatialLayout<T, Dim, Mesh, PositionProperties...>::numberOfSends(
         int rank, const locate_type& ranks) {
         size_t nSends     = 0;
         using policy_type = Kokkos::RangePolicy<position_execution_space>;

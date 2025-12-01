@@ -7,7 +7,8 @@
 
 template <typename T, unsigned Dim>
 class LoadBalancer {
-    using Base          = ippl::ParticleBase<ippl::ParticleSpatialLayout<T, Dim>>;
+    using Base =
+        ippl::ParticleBase<ippl::ParticleSpatialLayout<T, Dim, ippl::UniformCartesian<T, Dim>>>;
     using FieldSolver_t = ippl::FieldSolverBase<T, Dim>;
 
 private:
@@ -84,29 +85,30 @@ public:
                      bool& isFirstRepartition) {
         // Repartition the domains
 
-            using Base = ippl::ParticleBase<ippl::ParticleSpatialLayout<T, Dim>>;
-            typename Base::particle_position_type *R;
-            R = &pc_m->R;
-            bool res = orb.binaryRepartition(*R, *fl, isFirstRepartition);
-            if (res != true) {
-                std::cout << "Could not repartition!" << std::endl;
-                return;
+        using Base =
+            ippl::ParticleBase<ippl::ParticleSpatialLayout<T, Dim, ippl::UniformCartesian<T, Dim>>>;
+        typename Base::particle_position_type* R;
+        R        = &pc_m->R;
+        bool res = orb.binaryRepartition(*R, *fl, isFirstRepartition);
+        if (res != true) {
+            std::cout << "Could not repartition!" << std::endl;
+            return;
+        }
+        // Update
+        this->updateLayout(fl, mesh, isFirstRepartition);
+        if constexpr (Dim == 2 || Dim == 3) {
+            if (fs_m->getStype() == "FFT") {
+                std::get<FFTSolver_t<T, Dim>>(fs_m->getSolver()).setRhs(*rho_m);
             }
-            // Update
-            this->updateLayout(fl, mesh, isFirstRepartition);
-            if constexpr (Dim == 2 || Dim == 3) {
-                if (fs_m->getStype() == "FFT") {
-                    std::get<FFTSolver_t<T, Dim>>(fs_m->getSolver()).setRhs(*rho_m);
-                }
-                if constexpr (Dim == 3) {
-                    if (fs_m->getStype() == "TG") {
-                        std::get<FFTTruncatedGreenSolver_t<T, Dim>>(fs_m->getSolver()).setRhs(*rho_m);
-                    } else if (fs_m->getStype() == "OPEN") {
-                        std::get<OpenSolver_t<T, Dim>>(fs_m->getSolver()).setRhs(*rho_m);
-                    }
+            if constexpr (Dim == 3) {
+                if (fs_m->getStype() == "TG") {
+                    std::get<FFTTruncatedGreenSolver_t<T, Dim>>(fs_m->getSolver()).setRhs(*rho_m);
+                } else if (fs_m->getStype() == "OPEN") {
+                    std::get<OpenSolver_t<T, Dim>>(fs_m->getSolver()).setRhs(*rho_m);
                 }
             }
         }
+    }
 
     bool balance(size_type totalP, const unsigned int nstep) {
         if (ippl::Comm->size() < 2 && loadbalancethreshold_m != 1.0) {
