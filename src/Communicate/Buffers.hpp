@@ -37,7 +37,8 @@ namespace ippl {
             auto b = buffer_handler.getBuffer(size * sizeof(T),
                                               std::max(overallocation, defaultOveralloc_m));
             spdlog::info("{}, getBuffer {}, buf, {}, size {}", (void*)this,
-                         grox::debug::print_type<memory_space>(), (void*)(b->getBuffer()), size);
+                         grox::debug::print_type<memory_space>(), (void*)(b->getBuffer()),
+                         size * sizeof(T));
             return b;
         }
 

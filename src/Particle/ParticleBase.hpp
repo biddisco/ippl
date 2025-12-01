@@ -325,11 +325,13 @@ namespace ippl {
     void ParticleBase<PLayout, IP...>::unpackRecv(mpi_comm_buffer_for_all_spaces mbuf, int N) {
         detail::runForAllSpaces([&]<typename MemorySpace>() {
             auto buf = mbuf.get<MemorySpace>();
-            buf->resetReadPos();
-            forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
-                att->deserialize(*buf, N);
-            });
-            unpack(N);
+            if (buf) {
+                buf->resetReadPos();
+                forAllAttributes<MemorySpace>([&]<typename Attribute>(Attribute& att) {
+                    att->deserialize(*buf, N);
+                });
+                unpack(N);
+            }
         });
     }
 

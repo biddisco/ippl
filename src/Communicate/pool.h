@@ -40,7 +40,7 @@
 
 #define RDMA_POOL_MAX_1K_CHUNKS     128
 #define RDMA_POOL_MAX_SMALL_CHUNKS  32
-#define RDMA_POOL_MAX_MEDIUM_CHUNKS 8
+#define RDMA_POOL_MAX_MEDIUM_CHUNKS 32
 #define RDMA_POOL_MAX_LARGE_CHUNKS  8
 
 // Description of memory pool objects:
