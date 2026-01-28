@@ -1,0 +1,84 @@
+include:
+  - local: "ci/cscs/common.yml"
+
+variables:
+  SLURM_UENV: "/capstor/store/cscs/cscs/public/uenvs/opal-x-gh200-mpich-gcc-2025-12-19-cuda-12.9.1.squashfs"
+  SLURM_UENV_VIEW: "default"
+  CUDA12_9_UENV: "/capstor/store/cscs/cscs/public/uenvs/opal-x-gh200-mpich-gcc-2025-12-19-cuda-12.9.1.squashfs"
+
+ippl-test-cuda12-sm90-debug-1-rank:
+  stage: ippl_test
+  needs: ["ippl-build-cuda12-sm90-debug"]
+  # image: "${CUDA12_9_UENV}"
+  extends: [.baremetal-runner-daint-gh200]
+  variables:
+    WITH_UENV_VIEW: "default"
+    BUILD_DIR: "ippl-build-debug"
+    WRAPPER: "/user-environment/wrapper-mpi.sh"
+    SLURM_UENV: "/capstor/store/cscs/cscs/public/uenvs/opal-x-gh200-mpich-gcc-2025-12-19-cuda-12.9.1.squashfs"
+    SLURM_UENV_VIEW: "default"
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1
+    SLURM_CPUS_PER_TASK: 64
+    SLURM_TIMELIMIT: "0:15:00"
+  before_script:
+    - pwd
+    - date
+    - ls -alh $BUILD_DIR/bin
+  script:
+    # - uenv start --view=$SLURM_UENV_VIEW $SLURM_UENV
+    - date
+    - cd $BUILD_DIR/
+    - mkdir -p bin/data
+    - srun -n 1 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 8 8 8 10000000 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - ctest --output-on-failure --timeout 60
+
+ippl-test-cuda12-sm90-release-1-rank:
+  stage: ippl_test
+  needs: ["ippl-build-cuda12-sm90-release"]
+  # image: "${CUDA12_9_UENV}"
+  extends: [.baremetal-runner-daint-gh200]
+  variables:
+    WITH_UENV_VIEW: "default"
+    BUILD_DIR: "ippl-build-release"
+    WRAPPER: "/user-environment/wrapper-mpi.sh"
+    SLURM_UENV: "/capstor/store/cscs/cscs/public/uenvs/opal-x-gh200-mpich-gcc-2025-12-19-cuda-12.9.1.squashfs"
+    SLURM_UENV_VIEW: "default"
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1
+    SLURM_CPUS_PER_TASK: 64
+    SLURM_TIMELIMIT: "0:15:00"
+  before_script:
+    - pwd
+    - date
+  script:
+    - date
+    - cd $BUILD_DIR/
+    - mkdir -p bin/data
+    - srun -n 1 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 8 8 8 10000000 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - ctest --output-on-failure --timeout 60
+
+ippl-test-cuda12-sm90-release-4-ranks:
+  stage: ippl_test
+  needs: ["ippl-build-cuda12-sm90-release"]
+  # image: "${CUDA12_9_UENV}"
+  extends: [.baremetal-runner-daint-gh200]
+  variables:
+    WITH_UENV_VIEW: "default"
+    BUILD_DIR: "ippl-build-release"
+    SLURM_UENV: "/capstor/store/cscs/cscs/public/uenvs/opal-x-gh200-mpich-gcc-2025-12-19-cuda-12.9.1.squashfs"
+    SLURM_UENV_VIEW: "default"
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 4
+    SLURM_CPUS_PER_TASK: 64
+    SLURM_TIMELIMIT: "0:30:00"
+  before_script:
+    - pwd
+    - date
+  script:
+    - date
+    - cd $BUILD_DIR/
+    - mkdir -p bin/data
+    - srun -n 4 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 16 16 16 10000000 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - ctest --output-on-failure --timeout 60
+    - date
