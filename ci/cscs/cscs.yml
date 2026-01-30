@@ -1,7 +1,7 @@
 include:
   # NVIDIA/GH200:
-  - local: "ci/cscs/cuda/build_sm90.yml"
-  - local: "ci/cscs/cuda/run_sm90.yml"
+  # - local: "ci/cscs/cuda/build_sm90.yml"
+  # - local: "ci/cscs/cuda/run_sm90.yml"
   # AMD/MI300:
   - local: "ci/cscs/rocm/build_rocm-6.3.yml"
   - local: "ci/cscs/rocm/run_rocm-6.3.yml"

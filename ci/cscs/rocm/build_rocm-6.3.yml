@@ -3,6 +3,8 @@ include:
 
 variables:
   ROCM6_3_UENV: "prgenv-gnu/25.07-6.3.3:v11"
+  F7T_CLIENT_ID: $F7T_TDS_CLIENT_ID
+  F7T_CLIENT_SECRET: $F7T_TDS_CLIENT_SECRET
 
 ippl-build-rocm6_3-debug:
   stage: ippl_build
@@ -13,6 +15,8 @@ ippl-build-rocm6_3-debug:
     WITH_UENV_VIEW: "default"
     BUILD_DIR: "ippl-build-debug"
     SLURM_JOB_NUM_NODES: 1
+    F7T_CLIENT_ID: $F7T_TDS_CLIENT_ID
+    F7T_CLIENT_SECRET: $F7T_TDS_CLIENT_SECRET
   before_script:
     # NOTE: error 'script config should be a string or a nested array of
     # strings up to 10 levels deep' -> add '' around the command to execute
@@ -55,6 +59,8 @@ ippl-build-rocm6_3-release:
     WITH_UENV_VIEW: "default"
     BUILD_DIR: "ippl-build-release"
     SLURM_JOB_NUM_NODES: 1
+    F7T_CLIENT_ID: $F7T_TDS_CLIENT_ID
+    F7T_CLIENT_SECRET: $F7T_TDS_CLIENT_SECRET
   before_script:
     # NOTE: error 'script config should be a string or a nested array of
     # strings up to 10 levels deep' -> add '' around the command to execute
