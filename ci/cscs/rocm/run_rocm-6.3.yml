@@ -1,0 +1,79 @@
+include:
+  - local: "ci/cscs/common.yml"
+
+variables:
+  SLURM_UENV: "prgenv-gnu/25.07-6.3.3:v11"
+  SLURM_UENV_VIEW: "default"
+  WRAPPER: "/users/biddisco/src/opal/ippl/scripts/landau/strong-scaling-alps/wrapper-mi300.sh"
+ippl-test-rocm6_3-debug-1-rank:
+  stage: ippl_test
+  needs: ["ippl-build-rocm6_3-debug"]
+  extends: [.baremetal-runner-daint-gh200]
+  variables:
+    WITH_UENV_VIEW: "default"
+    BUILD_DIR: "ippl-build-debug"
+    SLURM_UENV: "prgenv-gnu/25.07-6.3.3:v11"
+    SLURM_UENV_VIEW: "default"
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1
+    SLURM_CPUS_PER_TASK: 64
+    SLURM_TIMELIMIT: "0:15:00"
+  before_script:
+    - pwd
+    - date
+    - ls -alh $BUILD_DIR/bin
+  script:
+    - date
+    - cd $BUILD_DIR/
+    - mkdir -p bin/data
+    - srun -n 1 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 8 8 8 10000000 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - ctest --output-on-failure --timeout 60
+
+ippl-test-rocm6_3-release-1-rank:
+  stage: ippl_test
+  needs: ["ippl-build-rocm6_3-release"]
+  extends: [.baremetal-runner-daint-gh200]
+  variables:
+    WITH_UENV_VIEW: "default"
+    BUILD_DIR: "ippl-build-release"
+    SLURM_UENV: "prgenv-gnu/25.07-6.3.3:v11"
+    SLURM_UENV_VIEW: "default"
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1
+    SLURM_CPUS_PER_TASK: 64
+    SLURM_TIMELIMIT: "0:15:00"
+  before_script:
+    - pwd
+    - date
+  script:
+    - date
+    - cd $BUILD_DIR/
+    - echo "Sanity check - run LandauDamping manually"
+    - mkdir -p bin/data
+    - srun -n 1 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 8 8 8 10000000 10 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - ctest --output-on-failure --timeout 60
+
+ippl-test-rocm6_3-release-4-ranks:
+  stage: ippl_test
+  needs: ["ippl-build-rocm6_3-release"]
+  extends: [.baremetal-runner-daint-gh200]
+  variables:
+    WITH_UENV_VIEW: "default"
+    BUILD_DIR: "ippl-build-release"
+    SLURM_UENV: "prgenv-gnu/25.07-6.3.3:v11"
+    SLURM_UENV_VIEW: "default"
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 4
+    SLURM_CPUS_PER_TASK: 64
+    SLURM_TIMELIMIT: "0:30:00"
+  before_script:
+    - pwd
+    - date
+  script:
+    - date
+    - cd $BUILD_DIR/
+    - echo "Sanity check - run LandauDamping manually"
+    - mkdir -p bin/data
+    - srun -n 4 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 16 16 16 10000000 10 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - ctest --output-on-failure --timeout 60
+    - date
