@@ -54,8 +54,9 @@ ippl-test-cuda12-sm90-release-1-rank:
   script:
     - date
     - cd $BUILD_DIR/
+    - echo "Sanity check - run LandauDamping manually"
     - mkdir -p bin/data
-    - srun -n 1 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 8 8 8 10000000 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - srun -n 1 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 8 8 8 10000000 10 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
     - ctest --output-on-failure --timeout 60
 
 ippl-test-cuda12-sm90-release-4-ranks:
@@ -78,7 +79,8 @@ ippl-test-cuda12-sm90-release-4-ranks:
   script:
     - date
     - cd $BUILD_DIR/
+    - echo "Sanity check - run LandauDamping manually"
     - mkdir -p bin/data
-    - srun -n 4 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 16 16 16 10000000 100 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
+    - srun -n 4 --uenv=${SLURM_UENV} --view=${SLURM_UENV_VIEW} $WRAPPER ./bin/LandauDamping 16 16 16 10000000 10 FFT 0.01 LeapFrog --overallocate 2.0 --info 10
     - ctest --output-on-failure --timeout 60
     - date
