@@ -42,9 +42,10 @@ function(add_ippl_integration_test TEST_NAME)
       PROPERTIES)
   cmake_parse_arguments(TEST "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
+  set(CTEST_TEST_NAME "${TEST_NAME}")
   if("${TEST_NAME}" IN_LIST IPPL_DISABLED_TEST_LIST)
-    message(STATUS "Skipping disabled test: ${TEST_NAME}")
-    return()
+    message(STATUS "Marking disabled test: ${TEST_NAME}")
+    set(CTEST_TEST_NAME "known_fail_${TEST_NAME}")
   endif()
 
   if(TEST_SOURCES)

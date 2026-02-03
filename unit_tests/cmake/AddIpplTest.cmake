@@ -33,9 +33,10 @@ function(add_ippl_test TEST_NAME)
   set(multiValueArgs LABELS ARGS MPI_ARGS SOURCES LAUNCH PROPERTIES)
   cmake_parse_arguments(TEST "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
+  set(CTEST_TEST_NAME "${TEST_NAME}")
   if("${TEST_NAME}" IN_LIST IPPL_DISABLED_TEST_LIST)
-    message(STATUS "Skipping disabled test: ${TEST_NAME}")
-    return()
+    message(STATUS "Marking disabled test: ${TEST_NAME}")
+    set(CTEST_TEST_NAME "known_fail_${TEST_NAME}")
   endif()
 
   if(TEST_SOURCES)
@@ -99,20 +100,20 @@ function(add_ippl_test TEST_NAME)
                      ${TEST_MPI_ARGS} ${_launched_cmd})
     elseif(TEST_REQUIRE_MPI)
       # Add a disabled test with a clear message
-      add_test(NAME ${TEST_NAME} COMMAND ${_launched_cmd})
-      set_tests_properties(${TEST_NAME} PROPERTIES DISABLED TRUE SKIP_REGULAR_EXPRESSION
-                                                   "MPI required but not found")
+      add_test(NAME ${CTEST_TEST_NAME} COMMAND ${_launched_cmd})
+      set_tests_properties(${CTEST_TEST_NAME} PROPERTIES DISABLED TRUE SKIP_REGULAR_EXPRESSION
+                                                         "MPI required but not found")
       return()
     else()
       # Fallback: run single-process without mpiexec
-      message(STATUS "add_ippl_test(${TEST_NAME}): MPI not found; running without mpiexec")
+      message(STATUS "add_ippl_test(${CTEST_TEST_NAME}): MPI not found; running without mpiexec")
       set(_final_cmd ${_launched_cmd})
     endif()
   endif()
 
   # Name prefix for nicer grouping: unit.<relpath>.<name> file(RELATIVE_PATH _rel
   # "${PROJECT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}") string(REPLACE "/" "." _rel "${_rel}")
-  set(_ctest_name "${TEST_NAME}")
+  set(_ctest_name "${CTEST_TEST_NAME}")
 
   # Register the test
   if(BUILD_TESTING)
