@@ -21,7 +21,7 @@ namespace ippl::comms {
 #ifdef IPPL_ALIGNED_COMMS_BUFFERS
     // alignment provided by AlignedBuffer wrapper
     template <typename... Properties>
-    using archive_buffer = detail::Archive<aligned_storage_wrapper<Properties...>>;
+    using archive_buffer = ippl::detail::Archive<aligned_storage_wrapper<Properties...>>;
 #else
     // default kokkos alignment
     template <typename... Properties>
@@ -30,8 +30,43 @@ namespace ippl::comms {
                                Kokkos::MemoryTraits<Kokkos::Aligned>>::view_type;
 
     template <typename... Properties>
-    using archive_buffer = detail::Archive<communicator_storage<Properties...>>;
+    using archive_buffer = ippl::detail::Archive<communicator_storage<Properties...>>;
 #endif
+
+    // shared pointer wrapper around an archive wrapper
+    template <typename MemorySpace>
+    using shared_archive_buffer = std::shared_ptr<archive_buffer<MemorySpace>>;
+
+    // bind the buffer type to the shared archive so that container_for_all_spaces
+    // can access it with just a memory space
+    struct shared_archive_buffer_binder {
+        template <typename MemorySpace>
+        using apply = shared_archive_buffer<MemorySpace>;
+    };
+
+    // wrap the bound buffer type in a container for all spaces
+    using shared_archive_buffer_for_all_spaces = typename ippl::detail::ContainerForAllSpaces<
+        shared_archive_buffer_binder::template apply>::type;
+
+    // ---------------------------------------------
+    // vector per MemorySpace
+    template <typename MemorySpace>
+    struct comm_buff_vector_for_space {
+        using type = std::vector<shared_archive_buffer<MemorySpace>>;
+    };
+
+    // bind the buffer type to the template so we can access using just a memory space template
+    struct comm_buff_vector_binder {
+        template <typename MemorySpace>
+        using apply = typename comm_buff_vector_for_space<MemorySpace>::type;
+    };
+
+    // alias template for all spaces
+    using mpi_comm_buffer_container_for_all_spaces =
+        typename ippl::detail::ContainerForAllSpaces<comm_buff_vector_binder::template apply>::type;
+
+    using mpi_comm_buffer_for_all_spaces = typename ippl::detail::ContainerForAllSpaces<
+        shared_archive_buffer_binder::template apply>::type;
 
     /**
      * @brief Interface for memory buffer handling.
