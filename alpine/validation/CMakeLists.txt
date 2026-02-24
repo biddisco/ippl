@@ -10,13 +10,13 @@ if(BUILD_TESTING)
 
   # command line params are : output, reference, tolerance
   add_test(
-    NAME LandauDampingCorrectnessValidation
+    NAME LandauDampingValidation
     COMMAND LandauDampingCorrectness "${PROJECT_BINARY_DIR}/alpine/data/FieldLandau_2_manager.csv"
             "${PROJECT_SOURCE_DIR}/alpine/validation/FieldLandau_valid_result.csv" "4E-1"
     WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/alpine/")
 
   set_tests_properties(
-    LandauDampingCorrectnessValidation
+    LandauDampingValidation
     PROPERTIES LABELS "validation;alpine" TIMEOUT 30
                # This test should only run if the LandauDamping integration test passed
                DEPENDS LandauDamping)
