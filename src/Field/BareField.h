@@ -50,7 +50,7 @@ namespace ippl {
         using view_type = typename detail::ViewType<T, Dim, ViewArgs...>::view_type;
         typedef typename view_type::memory_space memory_space;
         typedef typename view_type::execution_space execution_space;
-        using HostMirror = typename view_type::host_mirror_type;
+        using HostMirror = typename view_type::HostMirror;
         template <class... PolicyArgs>
         using policy_type = typename RangePolicy<Dim, PolicyArgs...>::policy_type;
 
