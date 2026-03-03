@@ -66,7 +66,7 @@ namespace ippl::comms {
         void* original;
         space = to_multiple(size);
         cudaMalloc(&original, space);
-        if (!original) {
+        if (!original && size > 0) {
             throw std::runtime_error("Error allocating cuda memory in AlignedBuffer");
         }
         ptrOriginal = original;
