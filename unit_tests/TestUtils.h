@@ -86,7 +86,7 @@ struct TestForTypes<std::tuple<Types...>> {
  * @tparam T precision
  */
 template <typename T>
-constexpr T tolerance = 10.*Kokkos::Experimental::epsilon_v<T>; 
+constexpr T tolerance = 10. * Kokkos::Experimental::epsilon_v<T>;
 
 /*!
  * Verifies that two values are equal to the correct level of precision
@@ -133,7 +133,7 @@ struct Rank;
  */
 struct TestParams {
     using Spaces     = ippl::detail::TypeForAllSpaces<std::tuple>::exec_spaces_type;
-    using Precisions = std::tuple<double, float>;
+    using Precisions = std::tuple<float, double>;
     using Combos     = CreateCombinations<Precisions, Spaces>::type;
 
     template <unsigned... Dims>
