@@ -13,18 +13,28 @@ namespace ippl::comms {
 
         auto freeBuffer = findFreeBuffer(requiredSize);
         if (freeBuffer != nullptr) {
+            SPDLOG_TRACE("getBuffer: freebuffer: size={}, overallocation={}, buffer={}", size,
+                         overallocation, (void*)freeBuffer.get());
             return getFreeBuffer(freeBuffer);
         }
 
         if (!free_buffers.empty()) {
-            return reallocateLargestFreeBuffer(requiredSize);
+            auto buffer = reallocateLargestFreeBuffer(requiredSize);
+            SPDLOG_TRACE("getBuffer: reallocateLargestFreeBuffer: returning buffer={}, size={}",
+                         (void*)buffer.get(), requiredSize);
+            return buffer;
         }
 
-        return allocateNewBuffer(requiredSize);
+        auto buffer = allocateNewBuffer(requiredSize);
+        SPDLOG_TRACE("getBuffer: allocateNewBuffer: returning buffer={}, size={}",
+                     (void*)buffer.get(), requiredSize);
+        return buffer;
     }
 
     template <typename MemorySpace>
     void DefaultBufferHandler<MemorySpace>::freeBuffer(buffer_type buffer) {
+        SPDLOG_TRACE("freeBuffer: buffer={}, size={}", (void*)buffer.get(),
+                     buffer ? buffer->getBufferSize() : 0);
         if (isBufferUsed(buffer)) {
             releaseUsedBuffer(buffer);
         }
@@ -32,6 +42,8 @@ namespace ippl::comms {
 
     template <typename MemorySpace>
     void DefaultBufferHandler<MemorySpace>::freeAllBuffers() {
+        SPDLOG_TRACE("freeAllBuffers: used_count={}, free_count={}", used_buffers.size(),
+                     free_buffers.size());
         free_buffers.insert(used_buffers.begin(), used_buffers.end());
         used_buffers.clear();
 
@@ -41,6 +53,8 @@ namespace ippl::comms {
 
     template <typename MemorySpace>
     void DefaultBufferHandler<MemorySpace>::deleteAllBuffers() {
+        SPDLOG_TRACE("deleteAllBuffers: used_count={}, free_count={}", used_buffers.size(),
+                     free_buffers.size());
         freeSize_m = 0;
         usedSize_m = 0;
 
@@ -51,12 +65,14 @@ namespace ippl::comms {
     template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::size_type
     DefaultBufferHandler<MemorySpace>::getUsedSize() const {
+        SPDLOG_TRACE("getUsedSize: size={}", usedSize_m);
         return usedSize_m;
     }
 
     template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::size_type
     DefaultBufferHandler<MemorySpace>::getFreeSize() const {
+        SPDLOG_TRACE("getFreeSize: size={}", freeSize_m);
         return freeSize_m;
     }
 
@@ -78,6 +94,8 @@ namespace ippl::comms {
 
     template <typename MemorySpace>
     void DefaultBufferHandler<MemorySpace>::releaseUsedBuffer(buffer_type buffer) {
+        SPDLOG_TRACE("releaseUsedBuffer: buffer={}, size={}", (void*)buffer.get(),
+                     buffer->getBufferSize());
         auto it = used_buffers.find(buffer);
 
         usedSize_m -= buffer->getBufferSize();
@@ -90,6 +108,7 @@ namespace ippl::comms {
     template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::buffer_type
     DefaultBufferHandler<MemorySpace>::findFreeBuffer(size_type requiredSize) {
+        SPDLOG_TRACE("findFreeBuffer: requiredSize={}", requiredSize);
         auto it = findSmallestSufficientBuffer(requiredSize);
         if (it != free_buffers.end()) {
             return *it;
@@ -109,6 +128,8 @@ namespace ippl::comms {
     template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::buffer_type
     DefaultBufferHandler<MemorySpace>::getFreeBuffer(buffer_type buffer) {
+        SPDLOG_TRACE("getFreeBuffer: buffer={}, size={}", (void*)buffer.get(),
+                     buffer->getBufferSize());
         freeSize_m -= buffer->getBufferSize();
         usedSize_m += buffer->getBufferSize();
 
@@ -121,6 +142,7 @@ namespace ippl::comms {
     template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::buffer_type
     DefaultBufferHandler<MemorySpace>::reallocateLargestFreeBuffer(size_type requiredSize) {
+        SPDLOG_TRACE("reallocateLargestFreeBuffer: requiredSize={}", requiredSize);
         auto largest_it    = std::prev(free_buffers.end());
         buffer_type buffer = *largest_it;
 
@@ -138,6 +160,7 @@ namespace ippl::comms {
     template <typename MemorySpace>
     typename DefaultBufferHandler<MemorySpace>::buffer_type
     DefaultBufferHandler<MemorySpace>::allocateNewBuffer(size_type requiredSize) {
+        SPDLOG_TRACE("allocateNewBuffer: requiredSize={}", requiredSize);
         buffer_type newBuffer = std::make_shared<archive_type>(requiredSize);
 
         usedSize_m += newBuffer->getBufferSize();

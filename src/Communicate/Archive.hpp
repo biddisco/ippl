@@ -15,7 +15,9 @@ namespace ippl {
         Archive<BufferType>::Archive(size_type size)
             : writepos_m(0)
             , readpos_m(0)
-            , buffer_m("buffer", size) {}
+            , buffer_m("buffer", size) {
+            SPDLOG_TRACE("Archive construct : {}, size {}", (void*)buffer_m.data(), size);
+        }
 
         // -----------------------------------
         // Scalar serialize
@@ -32,8 +34,11 @@ namespace ippl {
             Kokkos::View<char*, Kokkos::MemoryUnmanaged> dst_view(dst_ptr, size * nsends);
             Kokkos::deep_copy(dst_view, src_view);
             Kokkos::fence();
-            SPDLOG_TRACE("Incrementing writepos: {}, from {}, to {}", (void*)dst_view.data(),
-                         writepos_m, writepos_m + (nsends * size));
+            SPDLOG_TRACE(
+                "serialize: (deepcopy): Incrementing writepos: {}, from {}, to {} : src_ptr {}, "
+                "dst_ptr {}",
+                (void*)dst_view.data(), writepos_m, writepos_m + (nsends * size),
+                (void*)src_view.data(), (void*)dst_view.data());
             writepos_m += (nsends * size);
         }
 
@@ -59,6 +64,11 @@ namespace ippl {
                 });
 
             Kokkos::fence();
+            SPDLOG_TRACE(
+                "serialize: (parallel for): Incrementing writepos: {}, from {}, to {} : src_ptr "
+                "{}, dst_ptr {}",
+                (void*)(dst_ptr), writepos_m, writepos_m + (nsends * size), (void*)src_ptr,
+                (void*)dst_ptr);
             writepos_m += Dim * size * nsends;
         }
 
@@ -84,8 +94,10 @@ namespace ippl {
             Kokkos::View<char*, Kokkos::MemoryUnmanaged> dst_view(dst_ptr, size * nrecvs);
             Kokkos::deep_copy(dst_view, src_view);
             Kokkos::fence();
-            SPDLOG_TRACE("Incrementing readpos: {}, from {}, to {}", (void*)buffer_m.data(),
-                         readpos_m, readpos_m + (nrecvs * size));
+            SPDLOG_TRACE(
+                "deserialize: Incrementing readpos: {}, from {}, to {} : src_ptr {}, dst_ptr {}",
+                (void*)buffer_m.data(), readpos_m, readpos_m + (nrecvs * size),
+                (void*)src_view.data(), (void*)dst_view.data());
             readpos_m += (nrecvs * size);
         }
 

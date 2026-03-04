@@ -36,9 +36,10 @@ namespace ippl {
 
             auto b = buffer_handler.getBuffer(size * sizeof(T),
                                               std::max(overallocation, defaultOveralloc_m));
-            SPDLOG_TRACE("{}, getBuffer {}, buf, {}, size {}", (void*)this,
-                         ippl::debug::print_type<memory_space>(), (void*)(b->getData()),
-                         size * sizeof(T));
+            SPDLOG_TRACE("{}, getBuffer {}, {}, type {}, buf, {}, size {}", (void*)this,
+                         ippl::debug::print_type<decltype(*this)>(),
+                         ippl::debug::print_type<memory_space>(), ippl::debug::print_type<T>(),
+                         (void*)(b->getData()), size * sizeof(T));
             return b;
         }
 
