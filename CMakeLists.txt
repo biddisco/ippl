@@ -57,6 +57,7 @@ option(IPPL_MARK_FAILING_TESTS
        "Prefix names of tests that are known to fail with 'known_fail' for filtering with ctest"
        OFF)
 option(IPPL_ENABLE_SCRIPTS "Generate job script templates for some benchmarks/tests" OFF)
+option(IPPL_ENABLE_NBODY "Enable the gridless N-body (Barnes-Hut) module backed by Ryoanji + cstone" OFF)
 
 # "Build IPPL as a shared library (ON) or static library (OFF)" OFF) if(IPPL_DYL)
 # set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE) message(WARNING "IPPL_DYL is deprecated; use
@@ -105,6 +106,21 @@ if(DEFINED USE_ALTERNATIVE_VARIANT)
     WARNING ${Red}
     "USE_ALTERNATIVE_VARIANT is deprecated. Please set IPPL_USE_ALTERNATIVE_VARIANT instead.")
   set(IPPL_USE_ALTERNATIVE_VARIANT ${USE_ALTERNATIVE_VARIANT} CACHE BOOL "" FORCE)
+endif()
+
+# ------------------------------------------------------------------------------
+# N-body (Barnes-Hut) module — vendored cstone + ryoanji from SPH-EXA
+# ------------------------------------------------------------------------------
+if(IPPL_ENABLE_NBODY)
+  if(NOT "CUDA" IN_LIST IPPL_PLATFORMS)
+    message(FATAL_ERROR
+      "IPPL_ENABLE_NBODY=ON requires 'CUDA' in IPPL_PLATFORMS "
+      "(currently: ${IPPL_PLATFORMS}). The Ryoanji Barnes-Hut backend "
+      "is GPU-only at this stage.")
+  endif()
+  enable_language(CUDA)
+  add_subdirectory(extern/cstone)
+  add_subdirectory(extern/ryoanji)
 endif()
 
 # ------------------------------------------------------------------------------

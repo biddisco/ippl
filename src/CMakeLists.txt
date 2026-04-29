@@ -44,8 +44,11 @@ target_compile_options(
          -g>
          $<$<CONFIG:RelWithDebInfo>:-O3
          -g>
-         $<$<CONFIG:Release>:-O3>
          >)
+# Note: the Release config used to add an explicit -O3 here. CMake's standard
+# CMAKE_CXX_FLAGS_RELEASE already supplies -O3 -DNDEBUG, so the explicit copy
+# was redundant and produced "multiple -O" warnings from Kokkos' nvcc_wrapper
+# on every IPPL-linked TU.
 
 get_target_property(_ippl_type ippl TYPE)
 if(_ippl_type)
