@@ -1,8 +1,8 @@
 // Disorder-Induced Heating — Barnes-Hut backend.
 //
-// Mirrors /users/tschwab/internship/fmm/sphexa/fmm/test/disorder_heating.cu
-// but routes the BH pipeline through ippl::nbody::SphexaBHSolver. Simulation
-// logic lives in DisorderHeatingBHManager (test/BH/DisorderHeatingBHManager.hpp).
+// Mirrors the sphexa DIH driver (fmm/test/disorder_heating.cu) but routes
+// the BH pipeline through ippl::nbody::SphexaBHSolver. Simulation logic
+// lives in DisorderHeatingBHManager (test/BH/DisorderHeatingBHManager.hpp).
 //
 // Usage:
 //   DisorderHeatingBH <dih_initial_positions.bin> [Nt]
@@ -33,14 +33,13 @@ int main(int argc, char* argv[]) {
         if (pos.size() < 2) {
             std::fprintf(stderr,
                          "Usage: %s <dih_initial_positions.bin> [Nt]\n"
-                         "  Default path tried: "
-                         "/users/tschwab/internship/psi/ippl/build/dih_initial_positions.bin\n",
+                         "  The .bin is exported by an instrumented "
+                         "examples/collisions/P3MHeating run.\n",
                          pos[0]);
+            ippl::finalize();
+            return 2;
         }
-        const std::string posPath =
-            (pos.size() > 1) ? std::string(pos[1])
-                             : std::string("/users/tschwab/internship/psi/ippl/build/"
-                                           "dih_initial_positions.bin");
+        const std::string posPath = std::string(pos[1]);
 
         std::vector<double> hx, hy, hz;
         ippl::nbody::loadDihPositions(posPath, hx, hy, hz);
