@@ -103,6 +103,10 @@ if(IPPL_ENABLE_SOLVERS)
   add_subdirectory(LinearSolvers)
 endif()
 
+if(IPPL_ENABLE_NBODY)
+  add_subdirectory(NBody)
+endif()
+
 include(${PROJECT_SOURCE_DIR}/cmake/PlatformOptions.cmake)
 
 target_link_libraries(ippl PUBLIC Kokkos::kokkos MPI::MPI_CXX)

@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # unit_tests/NBody/CMakeLists.txt
 #
-# Phase-0 sanity tests for the vendored cstone + ryoanji codebases.
+# Sanity tests for the vendored cstone + ryoanji codebases.
 # Each source file is a verbatim copy of an upstream SPH-EXA unit test.
 # These tests verify that the vendored sources compile, link, and behave
 # the same way they do in the upstream tree.
@@ -52,4 +52,58 @@ target_link_libraries(RyoanjiDirect PRIVATE
   ippl::cstone_gpu)
 set_target_properties(RyoanjiDirect PROPERTIES
   CUDA_SEPARABLE_COMPILATION ON
+  POSITION_INDEPENDENT_CODE ON)
+
+# SphexaParticleContainer sanity test: construct, create, sync, verify
+# ID-position lockstep round-trip on a single rank.
+# Notes:
+#   - CUDA_SEPARABLE_COMPILATION is NOT enabled on this test (same reason
+#     as ippl_nbody — including <Kokkos_Core.hpp> via SphexaParticleContainer.hpp
+#     under RDC mode trips desul's atomics check).
+#   - The test provides its own main() that calls ippl::initialize / ippl::finalize
+#     because cstone's Domain calls MPI collectives unconditionally — the stock
+#     gtest main does not initialize MPI. Hence: no USE_GTEST_MAIN.
+add_ippl_test(SphexaContainerSync
+  SOURCES SphexaContainerSync.cu
+  NO_MPI
+  LABELS nbody gpu)
+target_link_libraries(SphexaContainerSync PRIVATE
+  ippl::nbody)
+set_target_properties(SphexaContainerSync PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+
+# BH solver sanity test: BH ≈ direct N² on a small open-BC system.
+# Same RDC / main / linkage caveats as SphexaContainerSync above.
+# ippl::ryoanji is needed for the GPU directSum() reference — the explicit
+# float/double instantiations live in multipole_holder.cu, part of the ryoanji
+# glue lib (see RyoanjiDirect for the precedent linkage).
+add_ippl_test(SphexaBHSolverDirect
+  SOURCES SphexaBHSolverDirect.cu
+  NO_MPI
+  LABELS nbody gpu)
+target_link_libraries(SphexaBHSolverDirect PRIVATE
+  ippl::nbody
+  ippl::ryoanji)
+set_target_properties(SphexaBHSolverDirect PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+
+# Leapfrog kernel sanity test: drift + half-kick correctness in isolation
+# (no BH solver). Same RDC / main / linkage pattern as SphexaContainerSync.
+add_ippl_test(LeapfrogStepperBasics
+  SOURCES LeapfrogStepperBasics.cu
+  NO_MPI
+  LABELS nbody gpu)
+target_link_libraries(LeapfrogStepperBasics PRIVATE
+  ippl::nbody)
+set_target_properties(LeapfrogStepperBasics PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+
+# Periodic-wrap kernel test: covers all-periodic, all-open, and mixed BCs.
+add_ippl_test(PeriodicWrapKernel
+  SOURCES PeriodicWrapKernel.cu
+  NO_MPI
+  LABELS nbody gpu)
+target_link_libraries(PeriodicWrapKernel PRIVATE
+  ippl::nbody)
+set_target_properties(PeriodicWrapKernel PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
