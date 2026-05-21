@@ -1,199 +1,229 @@
 #include "NBody/SphexaBHSolver.hpp"
 
 #include <cstdint>
+#include <cstdio>
 
 #include <cuda_runtime.h>
+#include <mpi.h>
 
-#include <thrust/device_vector.h>
-#include <thrust/fill.h>
+#include "Utility/IpplTimings.h"
 
-#include "cstone/sfc/box.hpp"
+#include "cstone/cuda/device_vector.h"
+#include "cstone/domain/domain.hpp"
 #include "cstone/focus/source_center.hpp"
-#include "cstone/focus/source_center_gpu.h"
+#include "cstone/sfc/box.hpp"
 #include "cstone/traversal/groups.hpp"
-#include "cstone/traversal/groups_gpu.h"
 #include "ryoanji/interface/ewald.cuh"
-#include "ryoanji/interface/treebuilder.cuh"
+#include "ryoanji/interface/multipole_holder.cuh"
 #include "ryoanji/nbody/cartesian_qpole.hpp"
-#include "ryoanji/nbody/traversal_gpu.h"
 #include "ryoanji/nbody/types.h"
-#include "ryoanji/nbody/upsweep_gpu.h"
 
 namespace ippl::nbody {
 
-template <class T, unsigned Dim>
-class SphexaBHSolver<T, Dim>::Impl {
-public:
-    using Container     = typename SphexaBHSolver<T, Dim>::Container;
-    using KeyType       = std::uint64_t;
-    using MultipoleType = ryoanji::CartesianQuadrupole<T>;
+namespace {
 
-    Impl(Container& pc, Params params)
-        : pc_(pc), params_(params),
-          treeBuilder_(/*bucketSize=*/64) {}
+class GpuTimer {
+public:
+    explicit GpuTimer(IpplTimings::TimerRef ref, bool collect = true)
+        : ref_(ref), collect_(collect) {
+        if (collect_) { IpplTimings::startTimer(ref_); }
+    }
+    ~GpuTimer() {
+        cudaDeviceSynchronize();
+        if (collect_) { IpplTimings::stopTimer(ref_); }
+    }
+private:
+    IpplTimings::TimerRef ref_;
+    bool                  collect_;
+};
+
+}  // namespace
+
+// Distributed BH+Ewald wrapper. Mirrors sphexa main/src/propagator/gravity_wrapper.hpp
+// (MultipoleHolderGpu::traverse): the MultipoleHolder owns the per-rank focus-tree
+// upsweep and the BH near-field traverse, and on periodic boxes we follow up with
+// computeGravityEwaldGpu using the focus-tree root center + root multipole.
+template <class P, unsigned Dim>
+class SphexaBHSolver<P, Dim>::Impl {
+public:
+    using Container     = typename SphexaBHSolver<P, Dim>::Container;
+    using Tc            = typename P::Tc;
+    using Th            = typename P::Th;
+    using Tm            = typename P::Tm;
+    using Ta            = typename P::Ta;
+    using Tf            = typename P::Tf;
+    using Tmm           = typename P::Tmm;
+    using KeyType       = std::uint64_t;
+    using MultipoleType = ryoanji::CartesianQuadrupole<Tmm>;
+    using Holder        = ryoanji::MultipoleHolder<Tc, Th, Tm, Ta, Tf, KeyType, MultipoleType>;
+
+    Impl(Container& pc, Params params) : pc_(pc), params_(params) {}
 
     Container& pc_;
     Params     params_;
-
-    ryoanji::TreeBuilder<KeyType>                      treeBuilder_;
-    thrust::device_vector<cstone::SourceCenterType<T>> dCenters_;
-    thrust::device_vector<MultipoleType>               dMultipoles_;
-    thrust::device_vector<int>                         dGlobalPool_;
-    cstone::GroupData<cstone::GpuTag>                  groups_;
-    bool                                               groupsInitialized_ = false;
+    Holder     mHolder_;
 };
 
-template <class T, unsigned Dim>
-SphexaBHSolver<T, Dim>::SphexaBHSolver(Container& pc, Params params)
+template <class P, unsigned Dim>
+SphexaBHSolver<P, Dim>::SphexaBHSolver(Container& pc, Params params)
     : impl_(std::make_unique<Impl>(pc, params)) {}
 
-template <class T, unsigned Dim>
-SphexaBHSolver<T, Dim>::~SphexaBHSolver() = default;
+template <class P, unsigned Dim>
+SphexaBHSolver<P, Dim>::~SphexaBHSolver() = default;
 
-template <class T, unsigned Dim>
-SphexaBHSolver<T, Dim>::SphexaBHSolver(SphexaBHSolver&&) noexcept = default;
+template <class P, unsigned Dim>
+SphexaBHSolver<P, Dim>::SphexaBHSolver(SphexaBHSolver&&) noexcept = default;
 
-template <class T, unsigned Dim>
-SphexaBHSolver<T, Dim>&
-SphexaBHSolver<T, Dim>::operator=(SphexaBHSolver&&) noexcept = default;
+template <class P, unsigned Dim>
+SphexaBHSolver<P, Dim>&
+SphexaBHSolver<P, Dim>::operator=(SphexaBHSolver&&) noexcept = default;
 
-template <class T, unsigned Dim>
-void SphexaBHSolver<T, Dim>::runSolver() {
+template <class P, unsigned Dim>
+void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
     auto& pc     = impl_->pc_;
     auto& params = impl_->params_;
     auto& s      = *impl_;
 
+    using Tc            = typename Impl::Tc;
+    using Ta            = typename Impl::Ta;
     using MultipoleType = typename Impl::MultipoleType;
 
-    pc.updateGrav();
-    pc.exchangeChargeHalos();
+    static IpplTimings::TimerRef tSync   = IpplTimings::getTimer("bh.syncGrav");
+    static IpplTimings::TimerRef tHalo   = IpplTimings::getTimer("bh.haloCharge");
+    static IpplTimings::TimerRef tUpswp  = IpplTimings::getTimer("bh.upsweep");
+    static IpplTimings::TimerRef tGroups = IpplTimings::getTimer("bh.groups");
+    static IpplTimings::TimerRef tZeroE  = IpplTimings::getTimer("bh.zeroE");
+    static IpplTimings::TimerRef tBH     = IpplTimings::getTimer("bh.compute");
+    static IpplTimings::TimerRef tEwald  = IpplTimings::getTimer("bh.ewald");
 
+    const bool collect = !warmup;
+
+    { GpuTimer t(tSync, collect); pc.updateGrav(); }
+    { GpuTimer t(tHalo, collect); pc.exchangeChargeHalos(); }
+
+    auto&         domain = pc.domain();
+    const auto    box    = pc.box();
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
-    const unsigned n     = end - start;
-    if (n == 0) { return; }
+    if (end == start) { return; }
 
-    const auto box = pc.box();
     const bool periodic =
         box.boundaryX() == cstone::BoundaryType::periodic &&
         box.boundaryY() == cstone::BoundaryType::periodic &&
         box.boundaryZ() == cstone::BoundaryType::periodic;
     const int numShells = periodic ? params.numShells : 0;
 
-    int numSources = s.treeBuilder_.update(
-        pc.getRxRaw() + start, pc.getRyRaw() + start, pc.getRzRaw() + start,
-        n, box);
-    unsigned                     highestLevel = s.treeBuilder_.maxTreeLevel();
-    cstone::TreeNodeIndex        numLeaves    = s.treeBuilder_.numLeafNodes();
-    const cstone::TreeNodeIndex* levelRange   = s.treeBuilder_.levelRange();
-    const float invTheta = 1.0f / params.theta;
-
-    s.dCenters_.resize(numSources);
-    cstone::computeLeafSourceCenterGpu(
-        pc.getRxRaw() + start, pc.getRyRaw() + start, pc.getRzRaw() + start,
-        pc.getChargeRaw() + start,
-        s.treeBuilder_.leafToInternal(), numLeaves,
-        s.treeBuilder_.layout(),
-        thrust::raw_pointer_cast(s.dCenters_.data()));
-    cstone::upsweepCentersGpu(
-        highestLevel, s.treeBuilder_.levelRange(),
-        s.treeBuilder_.childOffsets(),
-        thrust::raw_pointer_cast(s.dCenters_.data()));
-    cstone::setMacGpu(
-        s.treeBuilder_.nodeKeys(), cstone::TreeNodeIndex(numSources),
-        thrust::raw_pointer_cast(s.dCenters_.data()), invTheta, box);
-
-    s.dMultipoles_.resize(numSources);
-    thrust::fill(s.dMultipoles_.begin(), s.dMultipoles_.end(), MultipoleType{});
-    ryoanji::computeLeafMultipoles(
-        pc.getRxRaw() + start, pc.getRyRaw() + start, pc.getRzRaw() + start,
-        pc.getChargeRaw() + start,
-        s.treeBuilder_.leafToInternal(), numLeaves,
-        s.treeBuilder_.layout(),
-        thrust::raw_pointer_cast(s.dCenters_.data()),
-        thrust::raw_pointer_cast(s.dMultipoles_.data()));
-    // Upsweep all internal levels including the root: the Ewald reciprocal-
-    // space sum reads dMultipoles_[0] as the box-wide expansion.
-    for (int level = int(highestLevel) - 1; level >= 0; --level) {
-        cstone::TreeNodeIndex first = levelRange[level];
-        cstone::TreeNodeIndex last  = levelRange[level + 1];
-        if (first < last) {
-            ryoanji::upsweepMultipoles(
-                first, last, s.treeBuilder_.childOffsets(),
-                thrust::raw_pointer_cast(s.dCenters_.data()),
-                thrust::raw_pointer_cast(s.dMultipoles_.data()));
-        }
-    }
-
-    if (!s.groupsInitialized_) {
-        cstone::computeFixedGroups(
-            cstone::LocalIndex(0), cstone::LocalIndex(n),
-            ryoanji::bhMaxTargetSize(), s.groups_);
-        s.dGlobalPool_.resize(ryoanji::stackSize(s.groups_.numGroups));
-        s.groupsInitialized_ = true;
-    }
-    cstone::TreeNodeIndex rootChildOffset;
-    cudaMemcpy(&rootChildOffset, s.treeBuilder_.childOffsets(),
-               sizeof(cstone::TreeNodeIndex), cudaMemcpyDeviceToHost);
-
-    // ryoanji::traverse accumulates onto Ex/Ey/Ez — zero them first.
     {
+        GpuTimer t(tUpswp, collect);
+        s.mHolder_.upsweep(
+            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(), pc.getChargeRaw(),
+            domain.globalTree(), domain.focusTree(), domain.layout().data());
+    }
+
+    cstone::GroupView grp;
+    {
+        GpuTimer t(tGroups, collect);
+        grp = s.mHolder_.computeSpatialGroups(
+            start, end,
+            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(), pc.getHRaw(),
+            domain.focusTree(), domain.layout().data(), box);
+    }
+
+    {
+        GpuTimer t(tZeroE, collect);
         const unsigned extent = pc.nWithHalos();
         if (extent > 0) {
-            const std::size_t bytes = static_cast<std::size_t>(extent) * sizeof(T);
+            const std::size_t bytes = static_cast<std::size_t>(extent) * sizeof(Ta);
             cudaMemsetAsync(pc.getExRaw(), 0, bytes);
             cudaMemsetAsync(pc.getEyRaw(), 0, bytes);
             cudaMemsetAsync(pc.getEzRaw(), 0, bytes);
         }
     }
 
-    ryoanji::traverse(
-        s.groups_.view(), rootChildOffset,
-        pc.getRxRaw() + start, pc.getRyRaw() + start, pc.getRzRaw() + start,
-        pc.getChargeRaw() + start, pc.getHRaw() + start,
-        pc.getRxRaw() + start, pc.getRyRaw() + start, pc.getRzRaw() + start,
-        pc.getChargeRaw() + start, pc.getHRaw() + start,
-        s.treeBuilder_.childOffsets(), s.treeBuilder_.internalToLeaf(),
-        s.treeBuilder_.layout(),
-        thrust::raw_pointer_cast(s.dCenters_.data()),
-        thrust::raw_pointer_cast(s.dMultipoles_.data()),
-        T(params.G), numShells,
-        ryoanji::Vec3<T>{box.lx(), box.ly(), box.lz()},
-        (T*)nullptr,
-        pc.getExRaw() + start, pc.getEyRaw() + start, pc.getEzRaw() + start,
-        thrust::raw_pointer_cast(s.dGlobalPool_.data()));
+    {
+        GpuTimer t(tBH, collect);
+        s.mHolder_.compute(
+            grp,
+            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
+            pc.getChargeRaw(), pc.getHRaw(),
+            Tc(params.G), numShells, box,
+            /*ugrav=*/static_cast<Ta*>(nullptr),
+            pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw());
+    }
+
+    // sphexa gravity_wrapper.hpp guard: ryoanji signals traversal-stack
+    // exhaustion by setting maxP2P = 0xFFFFFFFF. Without this check the
+    // kernel returns with corrupt index data and the next syncGrav deadlocks
+    // on bad SFC keys (silent hang).
+    {
+        auto stats = s.mHolder_.readStats();
+        if (stats[1] == 0xFFFFFFFFull) {
+            int mpiRank = -1;
+            MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
+            throw std::runtime_error(
+                "Barnes-Hut traversal stack exhausted on rank " +
+                std::to_string(mpiRank) +
+                ". Raise theta, reduce numShells, or shrink particle count per rank.");
+        }
+
+        // Per-step BH stats — global aggregates across ranks for direct
+        // comparison with sphexa's timer.logStatistics output. sphexa logs
+        // stats[0]/lastStepTime and stats[2]/lastStepTime (rates); we log
+        // the raw counts so the comparison is unambiguous. Skipped during the
+        // pre_run warmup solve so the printed counts reflect only the timed
+        // steps (mirrors the timing skip above).
+        if (collect) {
+            unsigned long long local[5] = {
+                static_cast<unsigned long long>(stats[0]),  // sumP2P
+                static_cast<unsigned long long>(stats[2]),  // sumM2P
+                static_cast<unsigned long long>(stats[1]),  // maxP2P
+                static_cast<unsigned long long>(stats[3]),  // maxM2P
+                static_cast<unsigned long long>(stats[4])}; // maxStack
+            unsigned long long sum[2] = {0, 0};
+            unsigned long long mx[3]  = {0, 0, 0};
+            MPI_Allreduce(&local[0], &sum[0], 2, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&local[2], &mx[0],  3, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+            int mpiRank = -1;
+            MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
+            if (mpiRank == 0) {
+                std::printf("[bh.stats] sumP2P=%llu sumM2P=%llu maxP2P=%llu maxM2P=%llu maxStack=%llu\n",
+                            sum[0], sum[1], mx[0], mx[1], mx[2]);
+                std::fflush(stdout);
+            }
+        }
+    }
 
     if (periodic) {
-        // Long-range Ewald correction. BH traverse contributes the truncated
-        // near-field lattice sum; computeGravityEwaldGpu adds the real-space
-        // erfc tail + reciprocal-space sum out to hCut. Tin-foil convention
-        // (k=0 mode skipped) — caller must seed a charge-neutral system.
-        using SC = cstone::SourceCenterType<T>;
-        SC hostCenter{};
-        cudaMemcpy(&hostCenter, thrust::raw_pointer_cast(s.dCenters_.data()),
-                   sizeof(SC), cudaMemcpyDeviceToHost);
-        MultipoleType hostMroot{};
-        cudaMemcpy(&hostMroot, thrust::raw_pointer_cast(s.dMultipoles_.data()),
+        GpuTimer t(tEwald, collect);
+        ryoanji::Vec4<Tc> rootCenter{};
+        cudaMemcpy(&rootCenter,
+                   domain.focusTree().expansionCentersAcc().data(),
+                   sizeof(rootCenter), cudaMemcpyDeviceToHost);
+        MultipoleType rootM{};
+        cudaMemcpy(&rootM, s.mHolder_.deviceMultipoles(),
                    sizeof(MultipoleType), cudaMemcpyDeviceToHost);
 
-        T ugravTotDummy = T(0);
+        // ugravTot accumulator type: per ryoanji's COMPUTE_GRAVITY_EWALD_GPU
+        // instantiations, the Tu template param matches Tc for all three
+        // pre-compiled precision combos (double/double/float for Double/Mixed/Float).
+        Tc ugravTotDummy = Tc(0);
         ryoanji::computeGravityEwaldGpu(
-            cstone::Vec3<T>{hostCenter[0], hostCenter[1], hostCenter[2]},
-            hostMroot,
-            s.groups_.view(),
-            pc.getRxRaw() + start, pc.getRyRaw() + start, pc.getRzRaw() + start,
-            pc.getChargeRaw() + start,
+            cstone::Vec3<Tc>{rootCenter[0], rootCenter[1], rootCenter[2]},
+            rootM, grp,
+            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
+            pc.getChargeRaw(),
             box, static_cast<float>(params.G),
-            /*ugrav=*/static_cast<T*>(nullptr),
-            pc.getExRaw() + start, pc.getEyRaw() + start, pc.getEzRaw() + start,
+            /*ugrav=*/static_cast<Ta*>(nullptr),
+            pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw(),
             /*ugravTot=*/&ugravTotDummy,
             params.ewaldSettings);
     }
-
-    cudaDeviceSynchronize();
 }
 
-template class SphexaBHSolver<float, 3>;
-template class SphexaBHSolver<double, 3>;
+// Explicit instantiations — one per precision policy. Each maps to a
+// pre-compiled ryoanji TRAVERSE_MPOLE + COMPUTE_GRAVITY_EWALD_GPU row.
+template class SphexaBHSolver<DoublePrecision, 3>;
+template class SphexaBHSolver<MixedPrecision,  3>;
+template class SphexaBHSolver<FloatPrecision,  3>;
 
 } // namespace ippl::nbody

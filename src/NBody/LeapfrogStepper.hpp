@@ -14,20 +14,24 @@ namespace ippl::nbody {
 //
 // Precondition: pc.update() or pc.updateGrav() has been called at least once,
 // so startIndex()/endIndex() are valid.
-template <class T>
-void leapfrogKickHalf(SphexaParticleContainer<T, 3>& pc, T dt);
+//
+// Velocity is stored at P::Tc; E-field at P::Ta. For mixed precision the kernel
+// upcasts E_i to Tc before the multiply, so velocity accumulators stay full
+// precision while the E-field memory traffic is halved.
+template <class P>
+void leapfrogKickHalf(SphexaParticleContainer<P, 3>& pc, typename P::Tc dt);
 
 // Full kick: P_i -= dt * E_i. Same iteration range and preconditions as
 // leapfrogKickHalf — used by Euler-style D→K integrators (e.g. DIH).
-template <class T>
-void leapfrogKick(SphexaParticleContainer<T, 3>& pc, T dt);
+template <class P>
+void leapfrogKick(SphexaParticleContainer<P, 3>& pc, typename P::Tc dt);
 
 // Drift: R_i += dt * P_i for every locally-owned particle.
 // Iterates [startIndex(), endIndex()).
 //
 // Precondition: pc.update() or pc.updateGrav() has been called at least once.
-template <class T>
-void leapfrogDrift(SphexaParticleContainer<T, 3>& pc, T dt);
+template <class P>
+void leapfrogDrift(SphexaParticleContainer<P, 3>& pc, typename P::Tc dt);
 
 } // namespace ippl::nbody
 

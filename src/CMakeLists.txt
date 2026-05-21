@@ -42,7 +42,7 @@ target_compile_options(
   PUBLIC $<$<COMPILE_LANGUAGE:CXX>:
          $<$<CONFIG:Debug>:-O0
          -g>
-         $<$<CONFIG:RelWithDebInfo>:-O3
+         $<$<CONFIG:RelWithDebInfo>:
          -g>
          >)
 # Note: the Release config used to add an explicit -O3 here. CMake's standard

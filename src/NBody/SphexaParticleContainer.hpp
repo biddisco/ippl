@@ -9,6 +9,8 @@
 
 #include "cstone/sfc/box.hpp"
 
+#include "NBody/BHPrecision.hpp"
+
 // Forward declarations of cstone types exposed by domain() accessors below.
 // Consumers that only construct/use particle attributes don't need these resolved;
 // callers that invoke methods on the returned reference (e.g. SphexaBHSolver) include
@@ -21,18 +23,24 @@ class Domain;
 
 namespace ippl::nbody {
 
-template <class T, unsigned Dim>
+template <class P, unsigned Dim>
 class SphexaParticleContainer {
     static_assert(Dim == 3, "SphexaParticleContainer requires Dim == 3");
 
 public:
-    using value_type = T;
+    using Precision  = P;
+    using Tc         = typename P::Tc;
+    using Th         = typename P::Th;
+    using Tm         = typename P::Tm;
+    using Ta         = typename P::Ta;
     using KeyType    = std::uint64_t;
     using LocalIndex = unsigned;
 
-    using KView      = Kokkos::View<T*, Kokkos::CudaSpace,
+    template <class U>
+    using KView      = Kokkos::View<U*, Kokkos::CudaSpace,
                                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
-    using KViewConst = Kokkos::View<const T*, Kokkos::CudaSpace,
+    template <class U>
+    using KViewConst = Kokkos::View<const U*, Kokkos::CudaSpace,
                                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
     // ID is stored as uint32_t (4 B) so it fits the same-type scratch-buffer
     // constraint imposed by cstone's GlobalAssignment::distribute (which
@@ -45,7 +53,7 @@ public:
     SphexaParticleContainer(int rank, int nRanks,
                             unsigned bucketSize, unsigned bucketSizeFocus,
                             float theta,
-                            std::array<T, 6> boxLoHi,
+                            std::array<Tc, 6> boxLoHi,
                             std::array<cstone::BoundaryType, 3> boundaries);
     ~SphexaParticleContainer();
 
@@ -84,26 +92,35 @@ public:
     LocalIndex nWithHalos() const;
 
     // Built-in vector attribute R (positions): three independent scalar arrays.
-    T* getRxRaw();
-    T* getRyRaw();
-    T* getRzRaw();
-    const T* getRxRaw() const;
-    const T* getRyRaw() const;
-    const T* getRzRaw() const;
+    Tc* getRxRaw();
+    Tc* getRyRaw();
+    Tc* getRzRaw();
+    const Tc* getRxRaw() const;
+    const Tc* getRyRaw() const;
+    const Tc* getRzRaw() const;
 
-    KView getRxView();
-    KView getRyView();
-    KView getRzView();
-    KViewConst getRxView() const;
-    KViewConst getRyView() const;
-    KViewConst getRzView() const;
+    KView<Tc> getRxView();
+    KView<Tc> getRyView();
+    KView<Tc> getRzView();
+    KViewConst<Tc> getRxView() const;
+    KViewConst<Tc> getRyView() const;
+    KViewConst<Tc> getRzView() const;
 
     // Built-in scalar attributes. h is the SPH-convention smoothing length used by
     // domain.sync's halo discovery; ID is a stable particle identifier.
-    T* getHRaw();
-    const T* getHRaw() const;
-    KView getHView();
-    KViewConst getHView() const;
+    Th* getHRaw();
+    const Th* getHRaw() const;
+    KView<Th> getHView();
+    KViewConst<Th> getHView() const;
+
+    // Record the uniform smoothing length used by ryoanji P2P softening.
+    // Required: updateGrav() passes a dummy h=0 buffer to cstone (so halo
+    // bounding boxes are not inflated by 2*h*factor), then refills h to
+    // nWithHalos with this value for ryoanji. Caller must call this once
+    // after initializing particles, before the first updateGrav().
+    // Assumes h is uniform across all particles; non-uniform h is unsupported
+    // on this path.
+    void setUniformH(Th val);
 
     IdType* getIDRaw();
     const IdType* getIDRaw() const;
@@ -112,32 +129,32 @@ public:
     // Built-in scalar source attribute (charge for plasma; mass for gravity).
     // Threaded through Domain::syncGrav by updateGrav(); read by the BH solver
     // as the monopole source for the multipole upsweep + traversal.
-    T* getChargeRaw();
-    const T* getChargeRaw() const;
-    KView getChargeView();
-    KViewConst getChargeView() const;
+    Tm* getChargeRaw();
+    const Tm* getChargeRaw() const;
+    KView<Tm> getChargeView();
+    KViewConst<Tm> getChargeView() const;
 
     // Built-in acceleration / E-field outputs. Written by SphexaBHSolver::runSolver().
-    T* getExRaw();   T* getEyRaw();   T* getEzRaw();
-    const T* getExRaw() const; const T* getEyRaw() const; const T* getEzRaw() const;
-    KView getExView();  KView getEyView();  KView getEzView();
-    KViewConst getExView() const; KViewConst getEyView() const; KViewConst getEzView() const;
+    Ta* getExRaw();   Ta* getEyRaw();   Ta* getEzRaw();
+    const Ta* getExRaw() const; const Ta* getEyRaw() const; const Ta* getEzRaw() const;
+    KView<Ta> getExView();  KView<Ta> getEyView();  KView<Ta> getEzView();
+    KViewConst<Ta> getExView() const; KViewConst<Ta> getEyView() const; KViewConst<Ta> getEzView() const;
 
     // Built-in velocity attribute. Owned-state only — never appears in any sync/scratch
     // tuple. Resized to nLocal at create() and to nWithHalos by updateGrav() so consumer
     // kernels can index uniformly over the position-array extent. Halo-region content
     // of P is undefined; the leapfrog stepper iterates [startIndex(), endIndex()) only.
-    T* getPxRaw();   T* getPyRaw();   T* getPzRaw();
-    const T* getPxRaw() const; const T* getPyRaw() const; const T* getPzRaw() const;
-    KView getPxView();  KView getPyView();  KView getPzView();
-    KViewConst getPxView() const; KViewConst getPyView() const; KViewConst getPzView() const;
+    Tc* getPxRaw();   Tc* getPyRaw();   Tc* getPzRaw();
+    const Tc* getPxRaw() const; const Tc* getPyRaw() const; const Tc* getPzRaw() const;
+    KView<Tc> getPxView();  KView<Tc> getPyView();  KView<Tc> getPzView();
+    KViewConst<Tc> getPxView() const; KViewConst<Tc> getPyView() const; KViewConst<Tc> getPzView() const;
 
-    cstone::Box<T> box() const;
+    cstone::Box<Tc> box() const;
 
     // Underlying cstone::Domain reference. Used by SphexaBHSolver to call
     // exchangeHalos / focusTree / globalTree / layout. Returning the full type means
     // any caller that invokes methods on it must include cstone/domain/domain.hpp.
-    using DomainT = cstone::Domain<KeyType, T, cstone::GpuTag>;
+    using DomainT = cstone::Domain<KeyType, Tc, cstone::GpuTag>;
     DomainT&       domain();
     const DomainT& domain() const;
 

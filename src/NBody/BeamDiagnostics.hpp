@@ -15,14 +15,16 @@ struct Triple {
     T z;
 };
 
-// Mean velocity over [startIndex(), endIndex()).
-template <class T>
-Triple<T> reduceMeanVelocity(SphexaParticleContainer<T, 3>& pc);
+// Mean velocity over [startIndex(), endIndex()). Velocity is at the container's
+// coordinate type P::Tc.
+template <class P>
+Triple<typename P::Tc> reduceMeanVelocity(SphexaParticleContainer<P, 3>& pc);
 
 // Per-axis variance of velocity around (avgVx, avgVy, avgVz). Caller computes
 // avgV via reduceMeanVelocity first.
-template <class T>
-Triple<T> reduceTemperature(SphexaParticleContainer<T, 3>& pc, Triple<T> avgV);
+template <class P>
+Triple<typename P::Tc> reduceTemperature(SphexaParticleContainer<P, 3>& pc,
+                                         Triple<typename P::Tc> avgV);
 
 }  // namespace ippl::nbody
 
