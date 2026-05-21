@@ -142,20 +142,6 @@ void setMac(std::span<const KeyType> nodeKeys,
     }
 }
 
-//! @brief Like setMac, but stores the unsquared MAC radius (for use with evaluateMacSum)
-template<class KeyType, class T>
-void setMacUnsquared(std::span<const KeyType> nodeKeys, std::span<SourceCenterType<T>> centers, float invTheta,
-                     const Box<T>& box)
-{
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < nodeKeys.size(); ++i)
-    {
-        Vec4<T> center = centers[i];
-        T       macSq  = computeVecMacR2(nodeKeys[i], util::makeVec3(center), invTheta, box);
-        centers[i][3]  = (center[3] != T(0)) ? std::sqrt(macSq) : T(0);
-    }
-}
-
 //! @brief compute geometric node centers based on node SFC keys and the global bounding box
 template<class KeyType, class T>
 void nodeFpCenters(std::span<const KeyType> prefixes, Vec3<T>* centers, Vec3<T>* sizes, const Box<T>& box)

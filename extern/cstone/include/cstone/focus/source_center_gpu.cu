@@ -120,7 +120,7 @@ __global__ void computeLeafSourceCenterKernel(const Tc* x,
 
         for (LocalIndex i = first + threadIdx.x % TPL; i < last; i += TPL)
         {
-            addBody(mc_loc, Vec4<Tf>{Tf(x[i]), Tf(y[i]), Tf(z[i]), Tf(m[i])});
+            addBody(mc_loc, {x[i], y[i], z[i], m[i]});
         }
     }
 
@@ -165,7 +165,6 @@ void computeLeafSourceCenterGpu(const Tc* x,
 
 COMPUTE_LEAF_SOURCE_CENTER_GPU(double, double, double);
 COMPUTE_LEAF_SOURCE_CENTER_GPU(double, float, double);
-COMPUTE_LEAF_SOURCE_CENTER_GPU(double, float, float);
 COMPUTE_LEAF_SOURCE_CENTER_GPU(float, float, float);
 
 template<class T>
@@ -209,7 +208,7 @@ template<class KeyType, class T>
 __global__ void computeGeoCentersKernel(
     const KeyType* prefixes, TreeNodeIndex numNodes, Vec3<T>* centers, Vec3<T>* sizes, const Box<T> box)
 {
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    TreeNodeIndex i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) { return; }
 
     KeyType prefix                  = prefixes[i];
@@ -240,7 +239,7 @@ template<class KeyType, class T>
 __global__ void geoMacSpheresKernel(
     const KeyType* prefixes, TreeNodeIndex numNodes, SourceCenterType<T>* centers, float invTheta, Box<T> box)
 {
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    TreeNodeIndex i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) { return; }
     centers[i] = computeMinMacR2(prefixes[i], invTheta, box);
 }
@@ -267,7 +266,7 @@ template<class KeyType, class T>
 __global__ void
 setMacKernel(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta, const Box<T> box)
 {
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    TreeNodeIndex i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) { return; }
 
     Vec4<T> center   = macSpheres[i];
@@ -292,99 +291,10 @@ SET_MAC_GPU(uint64_t, float);
 SET_MAC_GPU(uint32_t, double);
 SET_MAC_GPU(uint64_t, double);
 
-template<class KeyType, class T>
-__global__ void
-setMacUnsquaredKernel(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                      const Box<T> box)
-{
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numNodes) { return; }
-
-    Vec4<T> center   = macSpheres[i];
-    T       macSq    = computeVecMacR2(prefixes[i], util::makeVec3(center), invTheta, box);
-    macSpheres[i][3] = (center[3] != T(0)) ? sqrt(macSq) : T(0);
-}
-
-template<class KeyType, class T>
-void setMacUnsquaredGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                        const Box<T>& box)
-{
-    unsigned numThreads = 256;
-    unsigned numBlocks  = iceil(numNodes, numThreads);
-    setMacUnsquaredKernel<<<numBlocks, numThreads>>>(prefixes, numNodes, macSpheres, invTheta, box);
-}
-
-#define SET_MAC_UNSQ_GPU(KeyType, T)                                                                                   \
-    template void setMacUnsquaredGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres,             \
-                                     float invTheta, const Box<T>& box)
-
-SET_MAC_UNSQ_GPU(uint32_t, float);
-SET_MAC_UNSQ_GPU(uint64_t, float);
-SET_MAC_UNSQ_GPU(uint32_t, double);
-SET_MAC_UNSQ_GPU(uint64_t, double);
-
-template<class KeyType, class T>
-__global__ void
-setMacFMMKernel(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta, const Box<T> box)
-{
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numNodes) { return; }
-
-    Vec4<T> center   = macSpheres[i];
-    macSpheres[i][3] = (center[3] != T(0)) ? computeVecMacR2FMM<T>(prefixes[i], invTheta, box) : T(0);
-}
-
-template<class KeyType, class T>
-void setMacFMMGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                  const Box<T>& box)
-{
-    unsigned numThreads = 256;
-    unsigned numBlocks  = iceil(numNodes, numThreads);
-    setMacFMMKernel<<<numBlocks, numThreads>>>(prefixes, numNodes, macSpheres, invTheta, box);
-}
-
-#define SET_MAC_FMM_GPU(KeyType, T)                                                                                    \
-    template void setMacFMMGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,   \
-                               const Box<T>& box)
-
-SET_MAC_FMM_GPU(uint32_t, float);
-SET_MAC_FMM_GPU(uint64_t, float);
-SET_MAC_FMM_GPU(uint32_t, double);
-SET_MAC_FMM_GPU(uint64_t, double);
-
-template<class KeyType, class T>
-__global__ void
-setMacBMaxKernel(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta, const Box<T> box)
-{
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numNodes) { return; }
-
-    Vec4<T> center   = macSpheres[i];
-    macSpheres[i][3] = (center[3] != T(0)) ? computeBMaxMacR2(prefixes[i], util::makeVec3(center), invTheta, box) : T(0);
-}
-
-template<class KeyType, class T>
-void setMacBMaxGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                   const Box<T>& box)
-{
-    unsigned numThreads = 256;
-    unsigned numBlocks  = iceil(numNodes, numThreads);
-    setMacBMaxKernel<<<numBlocks, numThreads>>>(prefixes, numNodes, macSpheres, invTheta, box);
-}
-
-#define SET_MAC_BMAX_GPU(KeyType, T)                                                                                   \
-    template void setMacBMaxGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,  \
-                                const Box<T>& box)
-
-SET_MAC_BMAX_GPU(uint32_t, float);
-SET_MAC_BMAX_GPU(uint64_t, float);
-SET_MAC_BMAX_GPU(uint32_t, double);
-SET_MAC_BMAX_GPU(uint64_t, double);
-
 template<class T>
 __global__ void moveCentersKernel(const Vec3<T>* src, TreeNodeIndex numNodes, Vec4<T>* dest)
 {
-    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    TreeNodeIndex i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) { return; }
     dest[i][0] = src[i][0];
     dest[i][1] = src[i][1];

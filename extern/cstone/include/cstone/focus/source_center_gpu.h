@@ -96,21 +96,6 @@ template<class KeyType, class T>
 extern void
 setMacGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta, const Box<T>& box);
 
-//! @brief Like setMacGpu, but stores the unsquared MAC radius (for use with evaluateMacSum)
-template<class KeyType, class T>
-extern void setMacUnsquaredGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                               const Box<T>& box);
-
-//! @brief FMM MAC: stores max(geoSize) * invTheta (purely geometric, no COM offset)
-template<class KeyType, class T>
-extern void setMacFMMGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                         const Box<T>& box);
-
-//! @brief BMax MAC: stores (sqrt(2)*max(geoSize) + ||COM-geo||) * invTheta
-template<class KeyType, class T>
-extern void setMacBMaxGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,
-                          const Box<T>& box);
-
 template<class T>
 extern void moveCenters(const Vec3<T>* src, TreeNodeIndex numNodes, Vec4<T>* dest);
 

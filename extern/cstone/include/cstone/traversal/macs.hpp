@@ -18,7 +18,6 @@
 
 #include "boxoverlap.hpp"
 #include "cstone/primitives/math.hpp"
-#include "cstone/primitives/stl.hpp"
 #include "cstone/traversal/traversal.hpp"
 #include "cstone/tree/octree.hpp"
 
@@ -80,59 +79,6 @@ HOST_DEVICE_FUN T computeVecMacR2(KeyType prefix, Vec3<T> expCenter, float invTh
     return mac * mac;
 }
 
-/*! @brief FMM version of vector MAC
- *
- * @param prefix       SFC key of the tree cell with Warren-Salmon placeholder-bit
- * @param invTheta     1/theta (opening parameter)
- * @param box          global coordinate bounding box
- * @return             
- */
-template<class T, class KeyType>
-HOST_DEVICE_FUN T computeVecMacR2FMM(KeyType prefix, float invTheta, const Box<T>& box)
-{
-    KeyType nodeKey  = decodePlaceholderBit(prefix);
-    int prefixLength = decodePrefixLength(prefix);
-
-    IBox cellBox              = sfcIBox(sfcKey(nodeKey), prefixLength / 3);
-    auto [geoCenter, geoSize] = centerAndSize<KeyType>(cellBox, box);
-
-    // Vec3<T> dX = expCenter - geoCenter;
-
-    // T s   = sqrt(norm2(dX));
-    T l   = max(geoSize);
-    T mac = l * invTheta;
-
-    return mac;
-}
-
-/*! @brief B_max MAC by Salmon & Warren, adapted to cornerstone
- *
- * @param prefix       SFC key of the tree cell with Warren-Salmon placeholder-bit
- * @param invTheta     1/theta (opening parameter)
- * @param box          global coordinate bounding box
- * @return             maximum distance from the multipole expansion center to the cell boundary, multiplied by 1/theta
- * */
-
-template<class T, class KeyType>
-HOST_DEVICE_FUN T computeBMaxMacR2(KeyType prefix, Vec3<T> expCenter, float invTheta, const Box<T>& box)
-{
-    KeyType nodeKey  = decodePlaceholderBit(prefix);
-    int prefixLength = decodePrefixLength(prefix);
-
-    IBox cellBox              = sfcIBox(sfcKey(nodeKey), prefixLength / 3);
-    auto [geoCenter, geoSize] = centerAndSize<KeyType>(cellBox, box);
-
-    Vec3<T> dX = expCenter - geoCenter;
-    
-    T s   = sqrt(norm2(dX));
-    // T l   = T(1.414213562) * max(geoSize);
-    // T l = T(1.73205080757) * max(geoSize);
-    T l = T(0.866025404) * max(geoSize);
-    T mac = (l+s) * invTheta;
-
-    return mac;
-}
-
 /*! @brief evaluate an arbitrary MAC with respect to a given target
  *
  * @tparam T             float or double
@@ -150,52 +96,6 @@ HOST_DEVICE_FUN bool evaluateMac(Vec3<T> sourceCenter, T macSq, Vec3<T> targetCe
     dX *= T(0.5);
     T R2 = norm2(dX);
     return R2 < std::abs(macSq);
-}
-
-template<class T>
-HOST_DEVICE_FUN bool evaluateMacM2L(Vec3<T> sourceCenter, T sourceMacSq, Vec3<T> targetCenter, T targetMacSq)
-{
-    Vec3<T> dX = targetCenter - sourceCenter;
-    T R2 = norm2(dX);
-    return R2 < stl::max(sourceMacSq, targetMacSq);
-}
-
-template<class T>
-HOST_DEVICE_FUN bool evaluateMacFMM(Vec3<T> sourceCenter, T sourceMac, Vec3<T> targetCenter, T targetMac)
-{
-    Vec3<T> dX = targetCenter - sourceCenter;
-    T L = sourceMac + targetMac;
-    T R2 = norm2(dX);
-    return R2 < L*L;
-}
-
-/*! @brief Additive M2L MAC: R2 < srcMacSq + tgtMacSq
- *
- * More restrictive than max-based M2L MAC. For same-level cells, requires
- * sqrt(2)x greater separation distance. Lower bound of the exact sum-of-radii
- * criterion. No storage changes needed — uses existing squared MAC values.
- */
-template<class T>
-HOST_DEVICE_FUN bool evaluateMacAdditive(Vec3<T> sourceCenter, T sourceMacSq, Vec3<T> targetCenter, T targetMacSq)
-{
-    Vec3<T> dX = targetCenter - sourceCenter;
-    T       R2 = norm2(dX);
-    return R2 < sourceMacSq + targetMacSq;
-}
-
-/*! @brief Sum-of-radii M2L MAC: R2 < (srcMac + tgtMac)^2
- *
- * Standard FMM well-separatedness criterion. For same-level cells, requires
- * 2x greater separation distance than max-based MAC. Requires UNSQUARED
- * MAC values stored in centers[i][3] (use setMacUnsquared).
- */
-template<class T>
-HOST_DEVICE_FUN bool evaluateMacSum(Vec3<T> sourceCenter, T sourceMac, Vec3<T> targetCenter, T targetMac)
-{
-    Vec3<T> dX     = targetCenter - sourceCenter;
-    T       R2     = norm2(dX);
-    T       sumMac = sourceMac + targetMac;
-    return R2 < sumMac * sumMac;
 }
 
 /*! @brief evaluate an arbitrary MAC with respect to a given target

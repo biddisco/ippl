@@ -260,11 +260,13 @@ template<class T, class KeyType>
 struct OctreeNsView
 {
     TreeNodeIndex numLeafNodes;
+    TreeNodeIndex numNodes;
     //! @brief see OctreeData
     const KeyType* prefixes;
     const TreeNodeIndex* childOffsets;
     const TreeNodeIndex* parents;
     const TreeNodeIndex* internalToLeaf;
+    const TreeNodeIndex* leafToInternal;
     const TreeNodeIndex* levelRange;
     const KeyType* leaves;
 
@@ -372,6 +374,7 @@ std::span<const TreeNodeIndex> leafToInternal(const OctreeData<KeyType, Accelera
     return {rawPtr(octree.leafToInternal) + octree.numInternalNodes, size_t(octree.numLeafNodes)};
 }
 
+//! @brief Deprecated, do not use in new code. Not used anymore in production code, some unit test usage remaining.
 template<class KeyType>
 class Octree
 {
@@ -411,34 +414,18 @@ public:
 
     OctreeView<KeyType> data()
     {
-        return {numLeafNodes_,
-                numInternalNodes_,
-                TreeNodeIndex(parents_.size()),
-                levelRange_.back(),
-                prefixes_.data(),
-                childOffsets_.data(),
-                parents_.data(),
-                levelRange_.data(),
-                nullptr,
-                internalToLeaf_.data(),
-                leafToInternal_.data(),
-                nullptr};
+        return {numLeafNodes_,          numInternalNodes_,      TreeNodeIndex(parents_.size()),
+                levelRange_.back(),     prefixes_.data(),       childOffsets_.data(),
+                parents_.data(),        levelRange_.data(),     nullptr,
+                internalToLeaf_.data(), leafToInternal_.data(), nullptr};
     }
 
     OctreeView<const KeyType> cdata() const
     {
-        return {numLeafNodes_,
-                numInternalNodes_,
-                TreeNodeIndex(parents_.size()),
-                levelRange_.back(),
-                prefixes_.data(),
-                childOffsets_.data(),
-                parents_.data(),
-                levelRange_.data(),
-                nullptr,
-                internalToLeaf_.data(),
-                leafToInternal_.data(),
-                nullptr};
+        return {numLeafNodes_,          numInternalNodes_,      TreeNodeIndex(parents_.size()),
+                levelRange_.back(),     prefixes_.data(),       childOffsets_.data(),
+                parents_.data(),        levelRange_.data(),     nullptr,
+                internalToLeaf_.data(), leafToInternal_.data(), nullptr};
     }
 
     //! @brief return a const view of the cstone leaf array

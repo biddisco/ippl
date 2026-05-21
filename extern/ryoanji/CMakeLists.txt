@@ -42,9 +42,18 @@ if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
   target_compile_features(ryoanji_kernels PUBLIC cxx_std_20)
   target_link_libraries(ryoanji_kernels PUBLIC ippl::cstone_gpu)
+  # -Xptxas=-v makes nvcc print per-kernel register counts and spill bytes
+  # during the build (look for "Used X registers, Y bytes spill stores" lines
+  # for traverseKernel). Used as a one-off diagnostic vs sphexa's build.
+  target_compile_options(ryoanji_kernels PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-v>)
+  # CUDA_SEPARABLE_COMPILATION (-rdc=true) is deliberately OFF: matches
+  # sphexa's upstream ryoanji_kernels target, lets nvcc whole-program-inline
+  # the inner-loop device helpers in traversal_gpu.cu (applyMAC, traverseWarp,
+  # approxAcc, P2P, shflSync, warpMin/Max), and recovers the per-P2P throughput
+  # that -rdc otherwise costs us.
   set_target_properties(ryoanji_kernels PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CUDA_SEPARABLE_COMPILATION ON)
+    POSITION_INDEPENDENT_CODE ON)
 
   add_library(ryoanji ${_RYOANJI_GLUE_SOURCES} $<TARGET_OBJECTS:ryoanji_kernels>)
   target_include_directories(ryoanji PUBLIC
@@ -52,8 +61,7 @@ if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
   target_compile_features(ryoanji PUBLIC cxx_std_20)
   target_link_libraries(ryoanji PUBLIC ippl::cstone_gpu)
   set_target_properties(ryoanji PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CUDA_SEPARABLE_COMPILATION ON)
+    POSITION_INDEPENDENT_CODE ON)
 
   # ewald.cu / multipole_holder.cu include <mpi.h>
   find_package(MPI COMPONENTS CXX QUIET)

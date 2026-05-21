@@ -76,12 +76,24 @@ if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
   target_compile_options(cstone_gpu PUBLIC
     $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>
     $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+  # CUDA_SEPARABLE_COMPILATION (-rdc=true) is deliberately OFF: matches
+  # sphexa's upstream cstone build and lets nvcc whole-program-inline the
+  # warp-cooperative primitives (shflSync, warpMin/Max, etc.) that
+  # ryoanji::traversal_gpu.cu pulls in from cstone headers.
   set_target_properties(cstone_gpu PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CUDA_SEPARABLE_COMPILATION ON)
+    POSITION_INDEPENDENT_CODE ON)
 
   if(CSTONE_WITH_GPU_AWARE_MPI)
     target_compile_definitions(cstone_gpu INTERFACE CSTONE_HAVE_GPU_AWARE_MPI)
+  else()
+    message(WARNING
+      "cstone_gpu is being built without CUDA-aware MPI "
+      "(CSTONE_WITH_GPU_AWARE_MPI=OFF). Every halo exchange, focus-tree "
+      "exchange and domain sync will stage device buffers through host "
+      "memory via cudaMemcpy D2H/H2D around each MPI call. "
+      "Pass -DCSTONE_WITH_GPU_AWARE_MPI=ON when the MPI implementation "
+      "supports device pointers (e.g. Cray MPICH with "
+      "MPICH_GPU_SUPPORT_ENABLED=1, OpenMPI built with CUDA, MVAPICH2-GDR).")
   endif()
 
   add_library(ippl::cstone_gpu ALIAS cstone_gpu)
