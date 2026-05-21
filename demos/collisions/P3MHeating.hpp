@@ -2,6 +2,8 @@
 #define IPPL_P3M_BENCH_MANAGER_HPP
 
 // includes
+#include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <iostream>
@@ -365,6 +367,21 @@ public:
         ippl::Comm->barrier();
 
         IpplTimings::stopTimer(GTimer);
+
+        if (rank == 0) {
+            auto R_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), R);
+            std::ofstream out("dih_initial_positions.bin", std::ios::binary);
+            uint64_t n = nloc;
+            out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+            for (unsigned d = 0; d < Dim; ++d) {
+                for (uint64_t i = 0; i < n; ++i) {
+                    T val = R_host(i)[d];
+                    out.write(reinterpret_cast<const char*>(&val), sizeof(val));
+                }
+            }
+            out.close();
+            m << "Exported " << n << " particle positions to dih_initial_positions.bin" << endl;
+        }
 
         IpplTimings::startTimer(UTimer);
         this->pcontainer_m->update();
