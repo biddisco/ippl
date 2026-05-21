@@ -36,8 +36,10 @@ __global__ void wrapKernel(unsigned start, unsigned n,
 
 } // namespace
 
-template <class T>
-void wrapToBox(SphexaParticleContainer<T, 3>& pc) {
+template <class P>
+void wrapToBox(SphexaParticleContainer<P, 3>& pc) {
+    using Tc = typename P::Tc;
+
     const unsigned start = pc.startIndex();
     const unsigned n     = pc.endIndex() - start;
     if (n == 0) { return; }
@@ -49,7 +51,7 @@ void wrapToBox(SphexaParticleContainer<T, 3>& pc) {
     if (!px && !py && !pz) { return; }   // open-BC fast path
 
     const unsigned grid = (n + kBlockSize - 1) / kBlockSize;
-    wrapKernel<T><<<grid, kBlockSize>>>(
+    wrapKernel<Tc><<<grid, kBlockSize>>>(
         start, n,
         pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
         box.xmin(), box.ymin(), box.zmin(),
@@ -57,7 +59,8 @@ void wrapToBox(SphexaParticleContainer<T, 3>& pc) {
         px, py, pz);
 }
 
-template void wrapToBox<float>(SphexaParticleContainer<float, 3>&);
-template void wrapToBox<double>(SphexaParticleContainer<double, 3>&);
+template void wrapToBox<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&);
+template void wrapToBox<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&);
+template void wrapToBox<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&);
 
 } // namespace ippl::nbody

@@ -11,21 +11,18 @@ file(RELATIVE_PATH _relPath "${PROJECT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}
 message(STATUS "Adding index test found in ${_relPath}")
 
 if(IPPL_ENABLE_NBODY)
-  # Landau Damping
   add_executable(LandauDampingBH
     LandauDampingBH.cpp
-    LandauInit.cu
-    LandauDiagnostics.cu)
+    LandauDampingBHManager.cu)
   target_link_libraries(LandauDampingBH PRIVATE IPPL::ippl ippl::nbody)
   target_include_directories(LandauDampingBH PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-  # Disorder-Induced Heating. The driver is .cu rather than .cpp because
-  # DisorderHeatingBHManager.hpp inlines the focusing kernel (`<<<...>>>` launch
-  # + __global__) directly into the manager — that requires the including TU to
-  # be processed by nvcc.
+  # The DIH driver is .cu rather than .cpp because DisorderHeatingBHManager.hpp
+  # inlines the focusing kernel (`<<<...>>>` launch + __global__) directly into
+  # the manager — that requires the including TU to be processed by nvcc.
   add_executable(DisorderHeatingBH
     DisorderHeatingBH.cu
-    DihDiagnostics.cu)
+    DisorderHeatingBHManager.cu)
   target_link_libraries(DisorderHeatingBH PRIVATE IPPL::ippl ippl::nbody)
   target_include_directories(DisorderHeatingBH PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

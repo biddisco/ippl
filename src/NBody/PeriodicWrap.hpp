@@ -12,8 +12,8 @@ namespace ippl::nbody {
 // is periodic. Iterates [startIndex(), endIndex()).
 //
 // Precondition: pc.update() or pc.updateGrav() has been called at least once.
-template <class T>
-void wrapToBox(SphexaParticleContainer<T, 3>& pc);
+template <class P>
+void wrapToBox(SphexaParticleContainer<P, 3>& pc);
 
 } // namespace ippl::nbody
 

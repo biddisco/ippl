@@ -1,6 +1,7 @@
 #ifndef IPPL_BH_IPPL_ARGS_HPP
 #define IPPL_BH_IPPL_ARGS_HPP
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,29 @@ inline std::vector<const char*> filterIpplFlags(int argc, char* argv[]) {
         out.push_back(a);
     }
     return out;
+}
+
+// Scan `pos` (the result of filterIpplFlags, typically) for a
+// `--precision=double|mixed|float` flag. If present, return the value as a
+// lowercase string and erase the flag from `pos` so the driver's positional
+// indexing is unaffected. If absent, return "double" as the default — this
+// preserves bit-for-bit behaviour for callers that don't pass the flag.
+// Throws std::runtime_error on an unrecognized value.
+inline std::string extractPrecisionFlag(std::vector<const char*>& pos) {
+    const std::string prefix = "--precision=";
+    for (auto it = pos.begin(); it != pos.end(); ++it) {
+        std::string arg(*it);
+        if (arg.rfind(prefix, 0) == 0) {
+            std::string val = arg.substr(prefix.size());
+            pos.erase(it);
+            if (val == "double" || val == "mixed" || val == "float") {
+                return val;
+            }
+            throw std::runtime_error("Unknown --precision value '" + val +
+                                     "' (expected double|mixed|float)");
+        }
+    }
+    return "double";
 }
 
 }  // namespace ippl::nbody

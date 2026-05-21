@@ -9,10 +9,7 @@
 # generic time-step primitives (leapfrog, periodic wrap), shared diagnostics
 # (mean velocity, temperature), and the NBodyManager base class.
 #
-# Simulation-specific code lives next to its driver in test/BH/ — see
-# test/BH/LandauInit.{hpp,cu}, test/BH/LandauDiagnostics.{hpp,cu},
-# test/BH/DihDiagnostics.{hpp,cu}. The DIH focusing kernel is inlined into
-# DisorderHeatingBHManager.hpp (its driver is .cu so nvcc sees the launch).
+# Simulation-specific code lives next to its driver in test/BH/.
 #
 # The module's source files (.cu) follow design plan §G: native CUDA + cstone,
 # no #include <Kokkos_Core.hpp> in the .cu/.cpp files. Kokkos appears only in
@@ -48,7 +45,8 @@ set_target_properties(ippl_nbody PROPERTIES
 
 add_library(ippl::nbody ALIAS ippl_nbody)
 
-install(FILES SphexaParticleContainer.hpp
+install(FILES BHPrecision.hpp
+              SphexaParticleContainer.hpp
               SphexaBHSolver.hpp
               LeapfrogStepper.hpp
               PeriodicWrap.hpp

@@ -3,9 +3,11 @@
 
 #include <memory>
 
+#include "Ippl.h"
 #include "Manager/BaseManager.h"
 #include "Utility/IpplTimings.h"
 
+#include "NBody/BHPrecision.hpp"
 #include "NBody/LeapfrogStepper.hpp"
 #include "NBody/PeriodicWrap.hpp"
 #include "NBody/SphexaBHSolver.hpp"
@@ -40,6 +42,10 @@ private:
 // the simulation-specific pieces (IC sampling, solver parameters, per-step
 // ordering, diagnostics) to derived managers via pure-virtual hooks.
 //
+// Templated on a precision policy P (NBody/BHPrecision.hpp). All inner types
+// (container, solver, leapfrog, diagnostics) take the same P so a single
+// template parameter selects the precision config end-to-end.
+//
 // Timing: every physics-active helper is wrapped with a ScopedIpplTimer so a
 // per-function breakdown lands in IpplTimings::print() at the end of the run.
 // The driver still controls the outer "total" timer.
@@ -64,16 +70,18 @@ private:
 //
 // Note the `Impl` suffix on advance / dump: the base class wraps both with a
 // ScopedIpplTimer so derived classes don't need to remember to instrument.
-template <class T, unsigned Dim>
+template <class P, unsigned Dim>
 class NBodyManager : public ippl::BaseManager {
     static_assert(Dim == 3, "NBodyManager requires Dim == 3");
 
 public:
-    using Container    = SphexaParticleContainer<T, Dim>;
-    using Solver       = SphexaBHSolver<T, Dim>;
+    using Precision    = P;
+    using Tc           = typename P::Tc;
+    using Container    = SphexaParticleContainer<P, Dim>;
+    using Solver       = SphexaBHSolver<P, Dim>;
     using SolverParams = typename Solver::Params;
 
-    NBodyManager(unsigned long N, int Nt, T dt)
+    NBodyManager(unsigned long N, int Nt, Tc dt)
         : ippl::BaseManager()
         , N_m(N)
         , Nt_m(Nt)
@@ -96,7 +104,11 @@ public:
         {
             ScopedIpplTimer scope(tInit);
             initializeContainer();
-            pcontainer_m->create(static_cast<unsigned>(N_m));
+            // Allocate per-rank storage. Derived managers fill only the local
+            // slice [0, localN()); after the first updateGrav() inside
+            // runSolver(), cstone reshards globally and [startIndex(),
+            // endIndex()) becomes this rank's owned range.
+            pcontainer_m->create(static_cast<unsigned>(localN()));
             initializeParticles();
 
             SolverParams bhParams;
@@ -106,11 +118,16 @@ public:
 
         {
             ScopedIpplTimer scope(tFirstSolv);
-            solver_m->runSolver();
+            // warmup=true: the t=0 solve is timed only by the outer
+            // "firstSolve" timer; the per-scope bh.* accumulators and the
+            // per-step bh.stats printout are reserved for the advance() loop
+            // so they reflect a pure per-step number directly comparable to
+            // sphexa's "Gravity" timer.
+            solver_m->runSolver(/*warmup=*/true);
         }
         post_initial_solve();
 
-        time_m = T(0);
+        time_m = Tc(0);
         it_m   = 0;
         dump();
     }
@@ -158,25 +175,25 @@ protected:
     void kickHalf() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("kickHalf");
         ScopedIpplTimer scope(t);
-        leapfrogKickHalf<T>(*pcontainer_m, dt_m);
+        leapfrogKickHalf<P>(*pcontainer_m, dt_m);
     }
 
     void kickFull() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("kickFull");
         ScopedIpplTimer scope(t);
-        leapfrogKick<T>(*pcontainer_m, dt_m);
+        leapfrogKick<P>(*pcontainer_m, dt_m);
     }
 
     void drift() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("drift");
         ScopedIpplTimer scope(t);
-        leapfrogDrift<T>(*pcontainer_m, dt_m);
+        leapfrogDrift<P>(*pcontainer_m, dt_m);
     }
 
     void wrap() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("wrap");
         ScopedIpplTimer scope(t);
-        wrapToBox<T>(*pcontainer_m);
+        wrapToBox<P>(*pcontainer_m);
     }
 
     void solve() {
@@ -191,10 +208,28 @@ protected:
     Solver&          solver()         { return *solver_m; }
     const Solver&    solver() const   { return *solver_m; }
 
-    T                time() const     { return time_m; }
+    Tc               time() const     { return time_m; }
     int              it()   const     { return it_m;   }
-    T                dt()   const     { return dt_m;   }
+    Tc               dt()   const     { return dt_m;   }
     unsigned long    N()    const     { return N_m;    }
+
+    // MPI-aware accessors. rank/size come from ippl::Comm so derived managers
+    // don't need to care whether we're running 1 rank or 1024.
+    int              rank()    const  { return ippl::Comm->rank(); }
+    int              numRanks() const { return ippl::Comm->size(); }
+
+    // Per-rank slice [firstGlobal, lastGlobal) of the global N. Even split with
+    // remainder on the trailing ranks: rank r owns [r*N/R, (r+1)*N/R). Single
+    // rank: [0, N) so existing single-rank behavior is unchanged.
+    unsigned long firstGlobal() const {
+        return (N_m * static_cast<unsigned long>(rank())) /
+               static_cast<unsigned long>(numRanks());
+    }
+    unsigned long lastGlobal() const {
+        return (N_m * static_cast<unsigned long>(rank() + 1)) /
+               static_cast<unsigned long>(numRanks());
+    }
+    unsigned long localN() const { return lastGlobal() - firstGlobal(); }
 
     // Derived classes assign the container during initializeContainer().
     void setContainer(std::unique_ptr<Container> pc) {
@@ -207,8 +242,8 @@ protected:
 
     unsigned long N_m;
     int           Nt_m;
-    T             dt_m;
-    T             time_m{T(0)};
+    Tc            dt_m;
+    Tc            time_m{Tc(0)};
     int           it_m{0};
 };
 
