@@ -42,11 +42,6 @@ if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
   target_compile_features(ryoanji_kernels PUBLIC cxx_std_20)
   target_link_libraries(ryoanji_kernels PUBLIC ippl::cstone_gpu)
-  # -Xptxas=-v makes nvcc print per-kernel register counts and spill bytes
-  # during the build (look for "Used X registers, Y bytes spill stores" lines
-  # for traverseKernel). Used as a one-off diagnostic vs sphexa's build.
-  target_compile_options(ryoanji_kernels PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-v>)
   # CUDA_SEPARABLE_COMPILATION (-rdc=true) is deliberately OFF: matches
   # sphexa's upstream ryoanji_kernels target, lets nvcc whole-program-inline
   # the inner-loop device helpers in traversal_gpu.cu (applyMAC, traverseWarp,
