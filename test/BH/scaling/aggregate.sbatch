@@ -14,7 +14,7 @@ set -euo pipefail
 
 MODE=$1
 CSV=$2
-SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC_DIR="${SCALING_SRC_DIR:?SCALING_SRC_DIR not set — invoke via submit_weak.sh}"
 BUILD=${SLURM_SUBMIT_DIR:-${SRC_DIR}/../../../build}
 cd "${BUILD}"
 

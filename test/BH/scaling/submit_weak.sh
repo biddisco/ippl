@@ -18,6 +18,10 @@ set -euo pipefail
 # with BUILD_DIR=/abs/path if your build tree lives elsewhere.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR=${BUILD_DIR:-${SCRIPT_DIR}/../../../build}
+: "${ACCOUNT:?set ACCOUNT=<slurm account> before invoking}"
+# Propagate the source dir to sbatch'd workers — they can't recover it from $0
+# because Slurm copies the script to /var/spool/slurmd/jobN/slurm_script.
+export SCALING_SRC_DIR="${SCRIPT_DIR}"
 if [ ! -x "${BUILD_DIR}/test/BH/LandauDampingBH" ] || [ ! -x "${BUILD_DIR}/alpine/LandauDamping" ]; then
   echo "error: expected ${BUILD_DIR}/test/BH/LandauDampingBH and ${BUILD_DIR}/alpine/LandauDamping" >&2
   echo "       set BUILD_DIR=/abs/path to your build tree if it lives elsewhere" >&2
@@ -66,11 +70,12 @@ for nranks in "${NRANKS_LIST[@]}"; do
 
   # ---- one PIC job per (mode, nranks) ----
   pic_jid=$(sbatch --parsable \
-    -A csstaff \
+    -A ${ACCOUNT} \
     -J "weak_pic_${nranks}" \
     -N ${nodes} \
     --ntasks-per-node ${gpn} \
     --gpus-per-task 1 \
+    --cpus-per-task 72 \
     -t ${TL} \
     -o "${LOG}/pic_${nranks}_%j.out" \
     -e "${LOG}/pic_${nranks}_%j.err" \
@@ -80,11 +85,12 @@ for nranks in "${NRANKS_LIST[@]}"; do
   # ---- three BH jobs per (mode, nranks), gated on the PIC job ----
   for prec in "${PRECISIONS[@]}"; do
     bh_jid=$(sbatch --parsable \
-      -A csstaff \
+      -A ${ACCOUNT} \
       -J "weak_bh_${nranks}_${prec}" \
       -N ${nodes} \
       --ntasks-per-node ${gpn} \
       --gpus-per-task 1 \
+      --cpus-per-task 72 \
       -t ${TL} \
       --dependency=afterok:${pic_jid} \
       -o "${LOG}/bh_${nranks}_${prec}_%j.out" \
@@ -97,7 +103,7 @@ done
 
 DEPS=$(IFS=:; echo "${BH_JOBS[*]}")
 jid=$(sbatch --parsable \
-  -A csstaff \
+  -A ${ACCOUNT} \
   -J "weak_plot" \
   -N 1 --ntasks-per-node 1 \
   -t 00:10:00 \
