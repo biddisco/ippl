@@ -29,6 +29,8 @@ conda activate <env>
 python3 ../test/BH/scripts/compare_landau.py --bh test/BH/data/FieldLandauBH_1000000.csv --ref alpine/data/FieldLandau_1_manager.csv --out landau_compare
 ```
 
+`LandauDampingBH` defaults to `--leaf-h=on` (per-particle `h` = local octree leaf edge length). Pass `--leaf-h=off` to revert to uniform `h` = `[smoothH]` positional arg (default 0.05). Effect on the damping rate is only visible at ≳ 64 GPUs.
+
 Plots: `$BUILD/landau_compare/`.
 
 ## Landau weak scaling

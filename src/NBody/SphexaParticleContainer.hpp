@@ -122,6 +122,12 @@ public:
     // on this path.
     void setUniformH(Th val);
 
+    // Switch the post-syncGrav h refill from uniform (fill with uniformH) to
+    // leaf-derived (per-particle h = local octree leaf edge length). Off by
+    // default. Orthogonal to setUniformH: when on, uniformH is only consulted
+    // on the first step before any syncGrav has populated the focus tree.
+    void setLeafBasedH(bool on);
+
     IdType* getIDRaw();
     const IdType* getIDRaw() const;
     IDView getIDView();

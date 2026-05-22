@@ -6,11 +6,16 @@
 //
 //   Usage:
 //     LandauDampingBH <N> <Nt> <theta> [seed] [numShells] [smoothH]
-//                     [--precision=double|mixed|float]
+//                     [--precision=double|mixed|float] [--leaf-h=on|off]
 //
 // --precision selects the BH precision policy (NBody/BHPrecision.hpp);
 // default is `double`, preserving bit-for-bit behaviour for callers that
 // don't pass the flag.
+//
+// --leaf-h toggles per-particle h = leaf edge length (default on). When off,
+// the positional [smoothH] arg is used as a uniform h for the BH P2P
+// softening. The first step before any syncGrav always uses [smoothH] since
+// the focus tree is not yet populated.
 //
 // The CIC grid-sampled energy diagnostic is gated by a source-level flag in
 // LandauDampingBHManager.hpp (kEnableCicEnergy) and is off in production runs
@@ -36,6 +41,7 @@ struct CliInputs {
     unsigned long seed      = 42;
     int           numShells = 1;
     double        smoothH   = 0.05;  // narrowed to P::Th inside runWith<P>
+    bool          leafBasedH = true;
 };
 
 template <class P>
@@ -47,7 +53,8 @@ int runWith(const CliInputs& in, Inform& msg) {
     cfg.theta     = in.theta;
     cfg.seed      = in.seed;
     cfg.numShells = in.numShells;
-    cfg.smoothH   = static_cast<typename P::Th>(in.smoothH);
+    cfg.smoothH    = static_cast<typename P::Th>(in.smoothH);
+    cfg.leafBasedH = in.leafBasedH;
 
     Manager manager(cfg);
     manager.pre_run();
@@ -73,8 +80,10 @@ int main(int argc, char* argv[]) {
         auto pos = ippl::nbody::filterIpplFlags(argc, argv);
 
         std::string precision;
+        bool        leafBasedH;
         try {
-            precision = ippl::nbody::extractPrecisionFlag(pos);
+            precision  = ippl::nbody::extractPrecisionFlag(pos);
+            leafBasedH = ippl::nbody::extractLeafHFlag(pos, /*defaultOn=*/true);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "%s\n", e.what());
             ippl::finalize();
@@ -82,6 +91,7 @@ int main(int argc, char* argv[]) {
         }
 
         CliInputs in;
+        in.leafBasedH = leafBasedH;
         if (pos.size() > 1) in.N         = std::atoll(pos[1]);
         if (pos.size() > 2) in.Nt        = std::atoi(pos[2]);
         if (pos.size() > 3) in.theta     = std::atof(pos[3]);
@@ -95,7 +105,8 @@ int main(int argc, char* argv[]) {
             << ", theta = "      << in.theta
             << ", seed = "       << in.seed
             << ", numShells = "  << in.numShells
-            << ", smoothH = "    << in.smoothH << endl;
+            << ", smoothH = "    << in.smoothH
+            << ", leaf-h = "     << (in.leafBasedH ? "on" : "off") << endl;
 
         static IpplTimings::TimerRef mainTimer = IpplTimings::getTimer("total");
         IpplTimings::startTimer(mainTimer);
