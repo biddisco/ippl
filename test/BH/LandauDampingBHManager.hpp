@@ -80,6 +80,11 @@ public:
                                             // resonant short-range Coulomb to be
                                             // faithful (default tuned for
                                             // N≈10⁷ in the (4π)³ box).
+        bool          leafBasedH = true;    // per-particle h = leaf edge length.
+                                            // Decouples softening from a global
+                                            // smoothH; smoothH is still consulted
+                                            // on the first step before any
+                                            // syncGrav has populated the tree.
     };
 
     explicit LandauDampingBHManager(Config cfg)
@@ -113,6 +118,7 @@ protected:
                           cfg_m.smoothH,
                           cfg_m.seed);
         this->pc().setUniformH(cfg_m.smoothH);
+        this->pc().setLeafBasedH(cfg_m.leafBasedH);
     }
 
     void initializeSolverParams(SolverParams& p) override {

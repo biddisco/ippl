@@ -1,13 +1,37 @@
 #include "NBody/SphexaParticleContainer.hpp"
 
+#include <cmath>
 #include <tuple>
 
 #include "cstone/cuda/device_vector.h"
 #include "cstone/domain/domain.hpp"
 #include "cstone/primitives/primitives_acc.hpp"
 #include "cstone/primitives/primitives_gpu.h"
+#include "cstone/sfc/common.hpp"
+#include "cstone/tree/csarray.hpp"
 
 namespace ippl::nbody {
+
+namespace {
+
+template <class KeyType, class Th>
+__global__ void setHFromLeafKernel(const KeyType* keys,
+                                   const KeyType* leaves,
+                                   int            nLeafKeys,
+                                   Th             cbrtVol,
+                                   Th*            h,
+                                   unsigned       n)
+{
+    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    KeyType                k         = keys[i];
+    cstone::TreeNodeIndex  leafIdx   = cstone::findNodeBelow(leaves, nLeafKeys, k);
+    KeyType                codeRange = leaves[leafIdx + 1] - leaves[leafIdx];
+    unsigned               level     = cstone::treeLevel(codeRange);
+    h[i] = cbrtVol / Th(1u << level);
+}
+
+}  // namespace
 
 template <class P, unsigned Dim>
 class SphexaParticleContainer<P, Dim>::Impl {
@@ -73,6 +97,9 @@ public:
     // Uniform smoothing length used by ryoanji P2P. Captured via setUniformH()
     // from the manager; used to fill impl_->h on grow after each syncGrav.
     Th                                       uniformH{Th(0)};
+    // When true, the post-syncGrav refill writes h_i = leaf_edge(particle_i)
+    // instead of fillGpu(uniformH). Set via setLeafBasedH().
+    bool                                     leafBasedH{false};
 };
 
 template <class P, unsigned Dim>
@@ -130,6 +157,11 @@ void SphexaParticleContainer<P, Dim>::setUniformH(Th val) {
 }
 
 template <class P, unsigned Dim>
+void SphexaParticleContainer<P, Dim>::setLeafBasedH(bool on) {
+    impl_->leafBasedH = on;
+}
+
+template <class P, unsigned Dim>
 void SphexaParticleContainer<P, Dim>::update() {
     // Px/Py/Pz are threaded through the property tuple so cstone permutes them
     // in lockstep with positions during the SFC sort. Without this, drift writes
@@ -162,12 +194,32 @@ void SphexaParticleContainer<P, Dim>::updateGrav() {
     impl_->Ez.resize(n);
 
     // impl_->h is no longer threaded through syncGrav; restore it for ryoanji.
-    // Fill only newly-grown entries — assumes uniform h (the existing entries
-    // already hold the correct value from create()/IC or the previous grow).
-    const LocalIndex oldH = impl_->h.size();
-    impl_->h.resize(n);
-    if (n > oldH) {
-        cstone::fillGpu(impl_->h.data() + oldH, impl_->h.data() + n, impl_->uniformH);
+    if (impl_->leafBasedH) {
+        // Per-particle h = local octree leaf edge length. Recomputed every
+        // step over [0, nWithHalos) because focus-tree refinement migrates
+        // particles between leaves between calls.
+        impl_->h.resize(n);
+        auto leaves = impl_->domain.focusTree().treeLeavesAcc();
+        const auto& bx = impl_->domain.box();
+        const Tc vol   = bx.lx() * bx.ly() * bx.lz();
+        const Th cbrtVol = static_cast<Th>(std::cbrt(static_cast<double>(vol)));
+        const unsigned blockSize = 256u;
+        const unsigned numBlocks = (n + blockSize - 1u) / blockSize;
+        setHFromLeafKernel<<<numBlocks, blockSize>>>(
+            impl_->particleKeys.data(),
+            leaves.data(),
+            static_cast<int>(leaves.size()),
+            cbrtVol,
+            impl_->h.data(),
+            n);
+    } else {
+        // Fill only newly-grown entries — assumes uniform h (the existing entries
+        // already hold the correct value from create()/IC or the previous grow).
+        const LocalIndex oldH = impl_->h.size();
+        impl_->h.resize(n);
+        if (n > oldH) {
+            cstone::fillGpu(impl_->h.data() + oldH, impl_->h.data() + n, impl_->uniformH);
+        }
     }
 }
 

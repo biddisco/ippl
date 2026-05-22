@@ -92,6 +92,24 @@ inline std::string extractPrecisionFlag(std::vector<const char*>& pos) {
     return "double";
 }
 
+// Scan `pos` for `--leaf-h=on|off` and erase it. Default `defaultOn` when
+// the flag is absent. Throws on an unrecognized value.
+inline bool extractLeafHFlag(std::vector<const char*>& pos, bool defaultOn) {
+    const std::string prefix = "--leaf-h=";
+    for (auto it = pos.begin(); it != pos.end(); ++it) {
+        std::string arg(*it);
+        if (arg.rfind(prefix, 0) == 0) {
+            std::string val = arg.substr(prefix.size());
+            pos.erase(it);
+            if (val == "on"  || val == "true"  || val == "1") return true;
+            if (val == "off" || val == "false" || val == "0") return false;
+            throw std::runtime_error("Unknown --leaf-h value '" + val +
+                                     "' (expected on|off)");
+        }
+    }
+    return defaultOn;
+}
+
 }  // namespace ippl::nbody
 
 #endif  // IPPL_BH_IPPL_ARGS_HPP
