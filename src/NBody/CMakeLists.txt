@@ -52,4 +52,6 @@ install(FILES BHPrecision.hpp
               PeriodicWrap.hpp
               BeamDiagnostics.hpp
               NBodyManager.hpp
+              ParticleAttribBase.hpp
+              ParticleAttrib.hpp
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ippl/NBody)

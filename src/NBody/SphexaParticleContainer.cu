@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <tuple>
+#include <vector>
 
 #include "cstone/cuda/device_vector.h"
 #include "cstone/domain/domain.hpp"
@@ -100,6 +101,8 @@ public:
     // When true, the post-syncGrav refill writes h_i = leaf_edge(particle_i)
     // instead of fillGpu(uniformH). Set via setLeafBasedH().
     bool                                     leafBasedH{false};
+
+    std::vector<ParticleAttribBase*>         userAttribs;
 };
 
 template <class P, unsigned Dim>
@@ -149,6 +152,14 @@ void SphexaParticleContainer<P, Dim>::create(LocalIndex nLocal) {
 
     impl_->hZero.resize(nLocal);
     cstone::fillGpu(impl_->hZero.data(), impl_->hZero.data() + nLocal, Th(0));
+
+    for (auto* a : impl_->userAttribs) a->resize(nLocal);
+}
+
+template <class P, unsigned Dim>
+void SphexaParticleContainer<P, Dim>::addAttribute(ParticleAttribBase& attr) {
+    impl_->userAttribs.push_back(&attr);
+    if (impl_->Rx.size() > 0) attr.resize(impl_->Rx.size());
 }
 
 template <class P, unsigned Dim>

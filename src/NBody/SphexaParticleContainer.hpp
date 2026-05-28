@@ -10,6 +10,7 @@
 #include "cstone/sfc/box.hpp"
 
 #include "NBody/BHPrecision.hpp"
+#include "NBody/ParticleAttribBase.hpp"
 
 // Forward declarations of cstone types exposed by domain() accessors below.
 // Consumers that only construct/use particle attributes don't need these resolved;
@@ -66,6 +67,10 @@ public:
     // Caller initializes positions, h, and ID through the raw / View accessors before
     // calling update().
     void create(LocalIndex nLocal);
+
+    // Caller owns the attribute and must keep it alive while registered.
+    // Owned-only: not permuted by update() / updateGrav() and not halo-exchanged.
+    void addAttribute(ParticleAttribBase& attr);
 
     // SFC-sort by position, redistribute particles across ranks, exchange position halos.
     // Permutes the ID attribute in lockstep with positions. After return,
