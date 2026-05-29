@@ -1,4 +1,4 @@
-// Sanity test: SphexaBHSolver should match direct N² to within the
+// Sanity test: NBodySolver should match direct N² to within the
 // theta-determined error bound on a small, well-conditioned system.
 //
 // We run the BH pipeline first (which SFC-sorts particles via updateGrav), then
@@ -12,64 +12,48 @@
 #include <cstdlib>
 #include <vector>
 
-#include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
 #include "Ippl.h"
 
-#include "NBody/SphexaParticleContainer.hpp"
-#include "NBody/SphexaBHSolver.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
+#include "NBody/NBodySolver.hpp"
+#include "NBodyTestUtil.hpp"
 
 #include "cstone/sfc/box.hpp"
 // cstone/cuda/cuda_utils.cuh must precede direct.cuh — direct.cuh references
 // kernelSuccess() but does not include its declaration (upstream omission).
-// RyoanjiDirect.cu uses the same workaround.
+// RyoanjiDirect.cu uses the same workaround. It also provides the portable
+// memcpy/syncGpu wrappers (CUDA or HIP).
 #include "cstone/cuda/cuda_utils.cuh"
 #include "ryoanji/nbody/direct.cuh"
 #include "ryoanji/nbody/types.h"
 
-using ippl::nbody::SphexaBHSolver;
-using ippl::nbody::SphexaParticleContainer;
+using ippl::nbody::DoublePrecision;
+using ippl::nbody::NBodySolver;
+using ippl::nbody::NBodyParticleContainer;
+using ippl::nbody::syncGravBH;
+using ippl::nbody::test::downloadDevice;
+using ippl::nbody::test::uploadHost;
+namespace fields = ippl::nbody::fields;
 
 namespace {
+
+using C = NBodyParticleContainer<DoublePrecision, 3>;
 
 constexpr unsigned kN             = 4096;
 constexpr unsigned kBucketSize    = 64;
 constexpr unsigned kBucketSizeFoc = 64;
 constexpr float    kTheta         = 0.5f;
 
-template <class T>
-void downloadDevice(const T* dPtr, std::size_t n, std::vector<T>& host) {
-    host.resize(n);
-    if (n == 0) { return; }
-    cudaError_t err = cudaMemcpy(host.data(), dPtr, n * sizeof(T), cudaMemcpyDeviceToHost);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy D2H failed: " << cudaGetErrorString(err);
-}
-
-template <class T>
-void uploadHost(const std::vector<T>& host, T* dPtr) {
-    if (host.empty()) { return; }
-    cudaError_t err = cudaMemcpy(dPtr, host.data(), host.size() * sizeof(T), cudaMemcpyHostToDevice);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy H2D failed: " << cudaGetErrorString(err);
-}
-
-// Allocate a device buffer of n elements of type T. Returns the device pointer.
-// Free with cudaFree.
-template <class T>
-T* deviceAlloc(std::size_t n) {
-    T* p = nullptr;
-    cudaError_t err = cudaMalloc(&p, n * sizeof(T));
-    EXPECT_EQ(err, cudaSuccess) << "cudaMalloc failed: " << cudaGetErrorString(err);
-    return p;
-}
-
 } // namespace
 
-TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
+TEST(NBodySolver, MatchesDirectSumOpenBC) {
     using T = double;
+    using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<T, 3> pc(
+    NBodyParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -79,27 +63,27 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     pc.create(kN);
 
     std::vector<T> xPre(kN), yPre(kN), zPre(kN), hPre(kN, 1.0e-2), qPre(kN, 1.0);
-    std::vector<typename SphexaParticleContainer<T, 3>::IdType> idPre(kN);
     ::srand48(/*seed=*/424242);
     for (unsigned i = 0; i < kN; ++i) {
         xPre[i]  = drand48();
         yPre[i]  = drand48();
         zPre[i]  = drand48();
-        idPre[i] = i;
     }
 
-    uploadHost(xPre,  pc.getRxRaw());
-    uploadHost(yPre,  pc.getRyRaw());
-    uploadHost(zPre,  pc.getRzRaw());
-    uploadHost(hPre,  pc.getHRaw());
-    uploadHost(qPre,  pc.getChargeRaw());
-    uploadHost(idPre, pc.getIDRaw());
+    uploadHost(xPre,  getRaw<"Rx">(pc));
+    uploadHost(yPre,  getRaw<"Ry">(pc));
+    uploadHost(zPre,  getRaw<"Rz">(pc));
+    uploadHost(hPre,  getRaw<"h">(pc));
+    uploadHost(qPre,  getRaw<"charge">(pc));
 
-    typename SphexaBHSolver<T, 3>::Params params;
+    typename NBodySolver<P, 3>::Params params;
     params.G         = T(1);
     params.numShells = 0;
 
-    SphexaBHSolver<T, 3> solver(pc, params);
+    NBodySolver<P, 3> solver(pc, params);
+    pc.setUniformH(0.01);
+    // BH consumes positions/charge/h; velocity/ID are conserved but unused here.
+    syncGravBH<P, fields::StdConserved, fields::StdDependent>(pc);
     solver.runSolver();
 
     const unsigned start      = pc.startIndex();
@@ -108,20 +92,12 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     ASSERT_EQ(end - start, kN) << "Single-rank: every particle should be locally owned.";
 
     // Reference: direct N² on the post-sync (SFC-sorted) positions/charges/h.
-    // Allocate output buffers on device for the directSum reference. directKernel
-    // does `+=` into these buffers (direct.cuh:78-83), so they must be zeroed —
-    // cudaMalloc does not initialize memory.
-    T* refPx = deviceAlloc<T>(nWithHalos);
-    T* refAx = deviceAlloc<T>(nWithHalos);
-    T* refAy = deviceAlloc<T>(nWithHalos);
-    T* refAz = deviceAlloc<T>(nWithHalos);
-    {
-        const std::size_t bytes = static_cast<std::size_t>(nWithHalos) * sizeof(T);
-        cudaMemset(refPx, 0, bytes);
-        cudaMemset(refAx, 0, bytes);
-        cudaMemset(refAy, 0, bytes);
-        cudaMemset(refAz, 0, bytes);
-    }
+    // directKernel does `+=` into these buffers (direct.cuh:78-83), so they must
+    // be zero-initialized — the DeviceVector(size, init) ctor does that.
+    cstone::DeviceVector<T> refPx(nWithHalos, T(0));
+    cstone::DeviceVector<T> refAx(nWithHalos, T(0));
+    cstone::DeviceVector<T> refAy(nWithHalos, T(0));
+    cstone::DeviceVector<T> refAz(nWithHalos, T(0));
 
     // Open BCs: numShells=0; box vector unused for the gravity sum but required
     // by the API. Pass the same box dimensions the container was constructed with.
@@ -131,24 +107,19 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     ryoanji::directSum(
         /*first=*/start, /*last=*/end, /*numBodies=*/end,
         boxL, /*numShells=*/0,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getChargeRaw(), pc.getHRaw(),
-        refPx, refAx, refAy, refAz);
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"charge">(pc), getRaw<"h">(pc),
+        refPx.data(), refAx.data(), refAy.data(), refAz.data());
 
-    cudaDeviceSynchronize();
+    syncGpu();
 
     std::vector<T> bhAx, bhAy, bhAz, dirAx, dirAy, dirAz;
-    downloadDevice(pc.getExRaw(), nWithHalos, bhAx);
-    downloadDevice(pc.getEyRaw(), nWithHalos, bhAy);
-    downloadDevice(pc.getEzRaw(), nWithHalos, bhAz);
-    downloadDevice(refAx, nWithHalos, dirAx);
-    downloadDevice(refAy, nWithHalos, dirAy);
-    downloadDevice(refAz, nWithHalos, dirAz);
-
-    cudaFree(refPx);
-    cudaFree(refAx);
-    cudaFree(refAy);
-    cudaFree(refAz);
+    downloadDevice(getRaw<"Ex">(pc), nWithHalos, bhAx);
+    downloadDevice(getRaw<"Ey">(pc), nWithHalos, bhAy);
+    downloadDevice(getRaw<"Ez">(pc), nWithHalos, bhAz);
+    downloadDevice(refAx.data(), nWithHalos, dirAx);
+    downloadDevice(refAy.data(), nWithHalos, dirAy);
+    downloadDevice(refAz.data(), nWithHalos, dirAz);
 
     // Mean-relative L2 error over the locally-owned range.
     long double sqErr = 0.0L;

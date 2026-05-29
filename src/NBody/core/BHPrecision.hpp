@@ -1,5 +1,19 @@
-#ifndef IPPL_NBODY_BH_PRECISION_HPP
-#define IPPL_NBODY_BH_PRECISION_HPP
+/*
+ * IPPL Barnes-Hut
+ * 
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ * 
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
+
+/*! @file
+ * @brief Precision policies corresponding to valid type combinations in ryoanji
+ * 
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#pragma once
 
 namespace ippl::nbody {
 
@@ -46,5 +60,3 @@ struct FloatPrecision {
 };
 
 }  // namespace ippl::nbody
-
-#endif  // IPPL_NBODY_BH_PRECISION_HPP

@@ -1,0 +1,173 @@
+/*
+ * IPPL Barnes-Hut
+ *
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ *
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
+
+/*! @file
+ * @brief cstone-style GPU reduction and element-wise primitives for the NBody kernels
+ *
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#include "NBody/helpers/primitives_gpu.h"
+
+#include <cstdint>
+
+#include <thrust/copy.h>
+#include <thrust/device_ptr.h>
+#include <thrust/device_vector.h>
+#include <thrust/execution_policy.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/reduce.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/tuple.h>
+
+#include "cstone/sfc/box.hpp"
+
+namespace ippl::nbody::detail {
+
+namespace {
+
+// Element-wise sum of two per-axis tuples; the reduce operator for both primitives.
+template <class T>
+struct TuplePlus3 {
+    __host__ __device__ thrust::tuple<T, T, T>
+    operator()(const thrust::tuple<T, T, T>& a, const thrust::tuple<T, T, T>& b) const {
+        return thrust::make_tuple(thrust::get<0>(a) + thrust::get<0>(b),
+                                  thrust::get<1>(a) + thrust::get<1>(b),
+                                  thrust::get<2>(a) + thrust::get<2>(b));
+    }
+};
+
+// Squared deviation of a zipped (vx,vy,vz) from the mean; the transform for the
+// variance primitive.
+template <class T>
+struct VelMinusMeanSqFunctor {
+    T meanVx, meanVy, meanVz;
+    __host__ __device__ thrust::tuple<T, T, T>
+    operator()(const thrust::tuple<T, T, T>& v) const {
+        T dx = thrust::get<0>(v) - meanVx;
+        T dy = thrust::get<1>(v) - meanVy;
+        T dz = thrust::get<2>(v) - meanVz;
+        return thrust::make_tuple(dx * dx, dy * dy, dz * dz);
+    }
+};
+
+}  // namespace
+
+template <class T>
+Triple<T> sumTripleGpu(const T* x, const T* y, const T* z, std::size_t n) {
+    auto first = thrust::make_zip_iterator(x, y, z);
+    auto last  = thrust::make_zip_iterator(x + n, y + n, z + n);
+    auto s = thrust::reduce(thrust::device, first, last,
+                            thrust::make_tuple(T(0), T(0), T(0)), TuplePlus3<T>{});
+    return Triple<T>{thrust::get<0>(s), thrust::get<1>(s), thrust::get<2>(s)};
+}
+
+template <class T>
+Triple<T> varianceTripleGpu(const T* x, const T* y, const T* z, std::size_t n,
+                            T mx, T my, T mz) {
+    auto first = thrust::make_zip_iterator(x, y, z);
+    auto last  = thrust::make_zip_iterator(x + n, y + n, z + n);
+    auto s = thrust::transform_reduce(thrust::device, first, last,
+                                      VelMinusMeanSqFunctor<T>{mx, my, mz},
+                                      thrust::make_tuple(T(0), T(0), T(0)), TuplePlus3<T>{});
+    return Triple<T>{thrust::get<0>(s), thrust::get<1>(s), thrust::get<2>(s)};
+}
+
+template Triple<double> sumTripleGpu(const double*, const double*, const double*, std::size_t);
+template Triple<float>  sumTripleGpu(const float*,  const float*,  const float*,  std::size_t);
+template Triple<double> varianceTripleGpu(const double*, const double*, const double*, std::size_t,
+                                          double, double, double);
+template Triple<float>  varianceTripleGpu(const float*, const float*, const float*, std::size_t,
+                                          float, float, float);
+
+// --- element-wise maps ------------------------------------------------------
+
+namespace {
+
+constexpr unsigned kBlockSize = 256u;
+
+inline unsigned gridFor(unsigned n) { return (n + kBlockSize - 1u) / kBlockSize; }
+
+template <class Tout, class Tin>
+__global__ void axpy3Kernel(unsigned start, unsigned n,
+                            Tout* __restrict__ ax, Tout* __restrict__ ay, Tout* __restrict__ az,
+                            const Tin* __restrict__ xx, const Tin* __restrict__ xy,
+                            const Tin* __restrict__ xz, Tout s) {
+    unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n) { return; }
+    unsigned i = start + tid;
+    ax[i] += s * static_cast<Tout>(xx[i]);
+    ay[i] += s * static_cast<Tout>(xy[i]);
+    az[i] += s * static_cast<Tout>(xz[i]);
+}
+
+template <class T>
+__global__ void driftWrapKernel(unsigned start, unsigned n,
+                                T* __restrict__ Rx, T* __restrict__ Ry, T* __restrict__ Rz,
+                                const T* __restrict__ Px, const T* __restrict__ Py,
+                                const T* __restrict__ Pz, T dt, cstone::Box<T> box) {
+    unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n) { return; }
+    unsigned i = start + tid;
+    cstone::Vec3<T> X{Rx[i] + dt * Px[i], Ry[i] + dt * Py[i], Rz[i] + dt * Pz[i]};
+    X = cstone::putInBox(X, box);
+    Rx[i] = X[0];
+    Ry[i] = X[1];
+    Rz[i] = X[2];
+}
+
+}  // namespace
+
+template <class Tout, class Tin>
+void axpy3Gpu(unsigned start, unsigned n,
+              Tout* ax, Tout* ay, Tout* az,
+              const Tin* xx, const Tin* xy, const Tin* xz, Tout s) {
+    if (n == 0u) { return; }
+    axpy3Kernel<Tout, Tin><<<gridFor(n), kBlockSize>>>(start, n, ax, ay, az, xx, xy, xz, s);
+}
+
+template <class T>
+void driftWrapGpu(unsigned start, unsigned n, T* Rx, T* Ry, T* Rz,
+                  const T* Px, const T* Py, const T* Pz, T dt, cstone::Box<T> box) {
+    if (n == 0u) { return; }
+    driftWrapKernel<T><<<gridFor(n), kBlockSize>>>(start, n, Rx, Ry, Rz, Px, Py, Pz, dt, box);
+}
+
+// Out-of-place right shift via a device temporary: copy [first,last) to tmp, then
+// tmp to [first+by, …). Avoids the overlapping in-place device memcpy that a direct
+// shift would incur. Container-agnostic — any device array.
+template <class T>
+void shiftRightGpu(T* data, unsigned first, unsigned last, unsigned by) {
+    if (last <= first || by == 0u) { return; }
+    const unsigned n = last - first;
+    thrust::device_vector<T> tmp(n);
+    thrust::copy(thrust::device, thrust::device_pointer_cast(data + first),
+                 thrust::device_pointer_cast(data + last), tmp.begin());
+    thrust::copy(thrust::device, tmp.begin(), tmp.end(),
+                 thrust::device_pointer_cast(data + first + by));
+}
+
+template void axpy3Gpu<double, double>(unsigned, unsigned, double*, double*, double*,
+                                       const double*, const double*, const double*, double);
+template void axpy3Gpu<double, float> (unsigned, unsigned, double*, double*, double*,
+                                       const float*,  const float*,  const float*,  double);
+template void axpy3Gpu<float,  float> (unsigned, unsigned, float*,  float*,  float*,
+                                       const float*,  const float*,  const float*,  float);
+template void driftWrapGpu<double>(unsigned, unsigned, double*, double*, double*,
+                                   const double*, const double*, const double*, double,
+                                   cstone::Box<double>);
+template void driftWrapGpu<float> (unsigned, unsigned, float*,  float*,  float*,
+                                   const float*,  const float*,  const float*,  float,
+                                   cstone::Box<float>);
+template void shiftRightGpu<double>(double*, unsigned, unsigned, unsigned);
+template void shiftRightGpu<float> (float*,  unsigned, unsigned, unsigned);
+template void shiftRightGpu<std::uint32_t>(std::uint32_t*, unsigned, unsigned, unsigned);
+template void shiftRightGpu<std::uint64_t>(std::uint64_t*, unsigned, unsigned, unsigned);
+
+}  // namespace ippl::nbody::detail

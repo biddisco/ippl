@@ -1,11 +1,25 @@
-#ifndef IPPL_NBODY_SPHEXA_BH_SOLVER_HPP
-#define IPPL_NBODY_SPHEXA_BH_SOLVER_HPP
+/*
+ * IPPL Barnes-Hut
+ *
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ *
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
+
+/*! @file
+ * @brief BH solver for coulomb interactions in NBody simulations
+ *
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#pragma once 
 
 #include <memory>
 
 #include "ryoanji/nbody/ewald.h"
 
-#include "NBody/SphexaParticleContainer.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 
 namespace ippl::nbody {
 
@@ -19,11 +33,11 @@ namespace ippl::nbody {
 // value type (Tmm) all come from P, so a single template parameter selects
 // one of the three pre-compiled ryoanji traversal instantiations.
 template <class P, unsigned Dim>
-class SphexaBHSolver {
-    static_assert(Dim == 3, "SphexaBHSolver requires Dim == 3");
+class NBodySolver {
+    static_assert(Dim == 3, "NBodySolver requires Dim == 3");
 
 public:
-    using Container = SphexaParticleContainer<P, Dim>;
+    using Container = NBodyParticleContainer<P, Dim>;
     using Tc        = typename P::Tc;
 
     struct Params {
@@ -33,13 +47,13 @@ public:
         ryoanji::EwaldSettings ewaldSettings;
     };
 
-    SphexaBHSolver(Container& pc, Params params);
-    ~SphexaBHSolver();
+    NBodySolver(Container& pc, Params params);
+    ~NBodySolver();
 
-    SphexaBHSolver(const SphexaBHSolver&)            = delete;
-    SphexaBHSolver& operator=(const SphexaBHSolver&) = delete;
-    SphexaBHSolver(SphexaBHSolver&&) noexcept;
-    SphexaBHSolver& operator=(SphexaBHSolver&&) noexcept;
+    NBodySolver(const NBodySolver&)            = delete;
+    NBodySolver& operator=(const NBodySolver&) = delete;
+    NBodySolver(NBodySolver&&) noexcept;
+    NBodySolver& operator=(NBodySolver&&) noexcept;
 
     // warmup=true skips the per-scope bh.* IpplTimings and the per-step stats
     // printout. Used by NBodyManager::pre_run() so the initial t=0 solve does
@@ -54,4 +68,4 @@ private:
 
 } // namespace ippl::nbody
 
-#endif // IPPL_NBODY_SPHEXA_BH_SOLVER_HPP
+#endif // IPPL_NBODY_SOLVER_HPP

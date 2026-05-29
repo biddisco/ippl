@@ -12,12 +12,11 @@
 #include <type_traits>
 #include <vector>
 
-#include <cuda_runtime.h>
-#include <thrust/device_ptr.h>
-#include <thrust/fill.h>
-
-#include "NBody/BeamDiagnostics.hpp"
+#include "NBody/physics/BeamDiagnostics.hpp"
 #include "NBody/NBodyManager.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
+
+#include "BHRandom.hpp"
 
 namespace ippl::nbody {
 
@@ -32,82 +31,67 @@ struct BeamStats12 {
 };
 
 template <class P>
-BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc);
+BeamStats12<typename P::Tc> reduceBeamStats(NBodyParticleContainer<P, 3>& pc);
 
 template <class P>
-Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc);
+Triple<typename P::Tc> reduceMeanAbsAccel(NBodyParticleContainer<P, 3>& pc);
 
+// DIH IC: device-parallel uniform-in-sphere via Kokkos::parallel_for
+// (r = beamRad·u^(1/3), direction from three normals), counter-based RNG keyed
+// on the global index (reproducible across rank counts). Writes straight into
+// field storage — no host buffers, no upload, no curand. Runs on GPU (CUDA/HIP)
+// or host threads (OpenMP/Serial) per the build's execution space.
 template <class P>
-void sampleDihIC(SphexaParticleContainer<P, 3>& pc,
-                 unsigned localN,
-                 unsigned long firstGlobal,
-                 typename P::Tc beamRad,
-                 typename P::Th smoothingH,
-                 unsigned long seed);
+inline void sampleDihIC(NBodyParticleContainer<P, 3>& pc,
+                        unsigned localN,
+                        unsigned long firstGlobal,
+                        typename P::Tc beamRad,
+                        typename P::Th smoothingH,
+                        unsigned long seed) {
+    using Tc = typename P::Tc;
+    using Th = typename P::Th;
+    using Tm = typename P::Tm;
+    if (localN == 0) { return; }
+
+    Tc* Rx = getRaw<"Rx">(pc); Tc* Ry = getRaw<"Ry">(pc); Tc* Rz = getRaw<"Rz">(pc);
+    Tc* px = getRaw<"Px">(pc); Tc* py = getRaw<"Py">(pc); Tc* pz = getRaw<"Pz">(pc);
+    Tm* q  = getRaw<"charge">(pc);
+    Th* h  = getRaw<"h">(pc);
+    const uint64_t base = static_cast<uint64_t>(seed) + static_cast<uint64_t>(firstGlobal);
+
+    Kokkos::parallel_for(
+        "sampleDihIC", static_cast<long>(localN),
+        KOKKOS_LAMBDA(const long t) {
+            uint64_t s  = base + static_cast<uint64_t>(t);
+            Tc u  = bhUniform<Tc>(s);
+            Tc nx = bhNormal<Tc>(s);
+            Tc ny = bhNormal<Tc>(s);
+            Tc nz = bhNormal<Tc>(s);
+            Tc normsq  = nx * nx + ny * ny + nz * nz;
+            Tc invNorm = (normsq > Tc(0)) ? (Tc(1) / Kokkos::sqrt(normsq)) : Tc(0);
+            Tc r       = beamRad * Kokkos::pow(u, Tc(1) / Tc(3));
+            Rx[t] = r * nx * invNorm;
+            Ry[t] = r * ny * invNorm;
+            Rz[t] = r * nz * invNorm;
+            px[t] = Tc(0);
+            py[t] = Tc(0);
+            pz[t] = Tc(0);
+            q[t]  = Tm(1);
+            h[t]  = smoothingH;
+        });
+    Kokkos::fence();
+}
 
 namespace dih_detail {
 
 // Constant linear focusing toward the box origin, applied as an additive force
-// on top of the BH-computed Ex/Ey/Ez. Mirrors the reference DIH driver at
-// disorder_heating.cu:117 (`a -= strength · r / beamRad`).
-//
-// Sign: our integrator's full kick is `P -= dt · E`, so adding
-// `+ strength · R / beamRad` to E produces `dP = -dt · strength · R / beamRad`,
-// pushing P toward the origin — same effect as `a -= strength · r / bRad`
-// followed by `v += dt · a`.
-//
-// Mixed-precision: positions and `scale` are at Tc; Ex/Ey/Ez are at Ta. The
-// add converts the Tc·Tc product to Ta implicitly.
-template <class Tc, class Ta>
-__global__ void focusingKernel(unsigned start, unsigned n,
-                               Tc scale,
-                               const Tc* __restrict__ Rx,
-                               const Tc* __restrict__ Ry,
-                               const Tc* __restrict__ Rz,
-                               Ta* __restrict__ Ex,
-                               Ta* __restrict__ Ey,
-                               Ta* __restrict__ Ez) {
-    unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= n) { return; }
-    unsigned i = start + tid;
-    Ex[i] += static_cast<Ta>(scale * Rx[i]);
-    Ey[i] += static_cast<Ta>(scale * Ry[i]);
-    Ez[i] += static_cast<Ta>(scale * Rz[i]);
-}
-
+// on top of the BH-computed Ex/Ey/Ez: Ex += (strength/beamRad) * Rx (same for
+// y, z). Over [startIndex(), endIndex()). Defined in
+// DisorderHeatingBHManager.{cu,cpp} (GPU kernel / OpenMP loop).
 template <class P>
-inline void applyFocusing(SphexaParticleContainer<P, 3>& pc,
-                          typename P::Tc strength,
-                          typename P::Tc beamRad) {
-    using Tc = typename P::Tc;
-    using Ta = typename P::Ta;
-
-    const unsigned start = pc.startIndex();
-    const unsigned n     = pc.endIndex() - start;
-    if (n == 0) { return; }
-    constexpr unsigned kBlockSize = 256;
-    const Tc           scale      = strength / beamRad;
-    const unsigned     grid       = (n + kBlockSize - 1) / kBlockSize;
-    focusingKernel<Tc, Ta><<<grid, kBlockSize>>>(
-        start, n, scale,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw());
-}
-
-// Copy a std::vector<double> of positions to a device buffer typed as Tc.
-// For Tc=double this is a direct memcpy; for Tc=float we narrow on the host
-// into a scratch vector and then memcpy. File mode is only exercised with
-// the reference 4096-particle .bin (all-double); the float fallback exists
-// for symmetry with the precision policy, not because of an existing use case.
-template <class Tc>
-inline void copyHostPositions(Tc* dev, const std::vector<double>& src) {
-    if constexpr (std::is_same_v<Tc, double>) {
-        cudaMemcpy(dev, src.data(), src.size() * sizeof(double), cudaMemcpyHostToDevice);
-    } else {
-        std::vector<Tc> tmp(src.begin(), src.end());
-        cudaMemcpy(dev, tmp.data(), tmp.size() * sizeof(Tc), cudaMemcpyHostToDevice);
-    }
-}
+void applyFocusing(NBodyParticleContainer<P, 3>& pc,
+                   typename P::Tc strength,
+                   typename P::Tc beamRad);
 
 }  // namespace dih_detail
 
@@ -243,6 +227,21 @@ public:
         , boxHalf_m(boxHalfRef_m * scaleFactor(globalN)) {}
 
 protected:
+    void prepareSolverInputs(bool collect) override {
+        auto& pc = this->pc();
+        {
+            static auto t = IpplTimings::getTimer("bh.syncGrav");
+            ippl::nbody::GpuTimer scope(t, collect);
+            syncGravBH<P, fields::StdConserved, fields::StdDependent>(pc);
+        }
+        {
+            static auto t = IpplTimings::getTimer("bh.haloCharge");
+            ippl::nbody::GpuTimer scope(t, collect);
+            pc.exchangeHalos(std::tie(pc.template getDV<"charge">()),
+                             pc.haloSendBuf(), pc.haloRecvBuf());
+        }
+    }
+
     void initializeContainer() override {
         using cstone::BoundaryType;
         const unsigned bucketSizeFocus = 64u;
@@ -273,16 +272,23 @@ protected:
         }
 
         // File mode: hx/hy/hz already hold this rank's slice from loadDihPositions.
+        // Upload via cstone DeviceVector assignment (narrow double->Tc on the host
+        // first); on the CPU backend this is a plain std::vector copy.
         const std::size_t localN = hx_m.size();
-        dih_detail::copyHostPositions<Tc>(this->pc().getRxRaw(), hx_m);
-        dih_detail::copyHostPositions<Tc>(this->pc().getRyRaw(), hy_m);
-        dih_detail::copyHostPositions<Tc>(this->pc().getRzRaw(), hz_m);
+        this->pc().template getDV<"Rx">() = std::vector<Tc>(hx_m.begin(), hx_m.end());
+        this->pc().template getDV<"Ry">() = std::vector<Tc>(hy_m.begin(), hy_m.end());
+        this->pc().template getDV<"Rz">() = std::vector<Tc>(hz_m.begin(), hz_m.end());
 
-        thrust::fill_n(thrust::device_ptr<Tm>(this->pc().getChargeRaw()), localN, Tm(1));
-        thrust::fill_n(thrust::device_ptr<Th>(this->pc().getHRaw()),      localN, smoothH_m);
-        thrust::fill_n(thrust::device_ptr<Tc>(this->pc().getPxRaw()),     localN, Tc(0));
-        thrust::fill_n(thrust::device_ptr<Tc>(this->pc().getPyRaw()),     localN, Tc(0));
-        thrust::fill_n(thrust::device_ptr<Tc>(this->pc().getPzRaw()),     localN, Tc(0));
+        Tm* qd  = getRaw<"charge">(this->pc());
+        Th* hd  = getRaw<"h">(this->pc());
+        Tc* pxd = getRaw<"Px">(this->pc());
+        Tc* pyd = getRaw<"Py">(this->pc());
+        Tc* pzd = getRaw<"Pz">(this->pc());
+        cstone::fill<kHaveGpu>(qd, qd + localN, Tm(1));
+        cstone::fill<kHaveGpu>(hd, hd + localN, smoothH_m);
+        cstone::fill<kHaveGpu>(pxd, pxd + localN, Tc(0));
+        cstone::fill<kHaveGpu>(pyd, pyd + localN, Tc(0));
+        cstone::fill<kHaveGpu>(pzd, pzd + localN, Tc(0));
         this->pc().setUniformH(smoothH_m);
 
         hx_m.clear(); hx_m.shrink_to_fit();
@@ -338,7 +344,8 @@ protected:
         // reductions inside MPI_Allreduce — but only rank 0 writes/prints.
         const int step = this->it() - 1;
         const bool isInitial = (step == -1);
-        printDihStats(this->pc(), csvPath_m, step, isInitial, this->N(),
+        printDihStats(this->pc(),
+                      csvPath_m, step, isInitial, this->N(),
                       this->rank() == 0);
 
         if (!isInitial && this->rank() == 0) {
@@ -356,7 +363,7 @@ private:
     // internal MPI_Allreduce, so every rank holds the global value after the
     // call. The 1/N normalization uses the *global* N (passed in). Only rank 0
     // writes to stdout and to the CSV.
-    static void printDihStats(SphexaParticleContainer<P, 3>& pc,
+    static void printDihStats(NBodyParticleContainer<P, 3>& pc,
                               const std::string& fnameCsv,
                               int step, bool isInitial,
                               unsigned long globalN, bool isRoot) {

@@ -62,9 +62,13 @@ option(IPPL_ENABLE_BENCHMARK "Enable Google Benchmark-based benchmarks" OFF)
 option(IPPL_ENABLE_NBODY
        "Enable the gridless N-body (Barnes-Hut) module backed by Ryoanji + cstone" OFF)
 
-
 option(IPPL_ENABLE_CATALYST "Enable ParaView Catalyst" OFF)
-set(Catalyst_DIR "" CACHE PATH "Catalyst cmake package directory or install prefix (catalyst_DIR and CATALYST_DIR also accepted)")
+set(Catalyst_DIR
+    ""
+    CACHE
+      PATH
+      "Catalyst cmake package directory or install prefix (catalyst_DIR and CATALYST_DIR also accepted)"
+)
 set(Catalyst_VERSION "" CACHE STRING "Catalyst version or git.<tag/branch/sha> (default 2.1.0)")
 # "Build IPPL as a shared library (ON) or static library (OFF)" OFF) if(IPPL_DYL)
 # set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE) message(WARNING "IPPL_DYL is deprecated; use
@@ -113,6 +117,25 @@ if(DEFINED USE_ALTERNATIVE_VARIANT)
     WARNING ${Red}
     "USE_ALTERNATIVE_VARIANT is deprecated. Please set IPPL_USE_ALTERNATIVE_VARIANT instead.")
   set(IPPL_USE_ALTERNATIVE_VARIANT ${USE_ALTERNATIVE_VARIANT} CACHE BOOL "" FORCE)
+endif()
+
+# ------------------------------------------------------------------------------
+# N-body (Barnes-Hut) module — vendored cstone + ryoanji from SPH-EXA
+# ------------------------------------------------------------------------------
+if(IPPL_ENABLE_NBODY)
+  # Backend follows IPPL_PLATFORMS, exactly like sphexa selects AccType: CUDA -> NVIDIA GPU (nvcc),
+  # HIP -> AMD GPU (hipcc), otherwise CPU. The vendored cstone/ryoanji build their GPU libraries
+  # only when a device language is enabled; on a CPU build they expose header-only INTERFACE targets
+  # and Domain<CpuTag> resolves header-only.
+  if("CUDA" IN_LIST IPPL_PLATFORMS)
+    enable_language(CUDA)
+    message(STATUS "NBody: CUDA (NVIDIA GPU) backend")
+  elseif("HIP" IN_LIST IPPL_PLATFORMS)
+    enable_language(HIP)
+    message(STATUS "NBody: HIP (AMD GPU) backend")
+  else()
+    message(STATUS "NBody: CPU backend (IPPL_PLATFORMS=${IPPL_PLATFORMS})")
+  endif()
 endif()
 
 # ------------------------------------------------------------------------------
