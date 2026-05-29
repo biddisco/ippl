@@ -17,9 +17,6 @@ if(IPPL_ENABLE_NBODY)
   target_link_libraries(LandauDampingBH PRIVATE IPPL::ippl ippl::nbody)
   target_include_directories(LandauDampingBH PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-  # The DIH driver is .cu rather than .cpp because DisorderHeatingBHManager.hpp
-  # inlines the focusing kernel (`<<<...>>>` launch + __global__) directly into
-  # the manager — that requires the including TU to be processed by nvcc.
   add_executable(DisorderHeatingBH
     DisorderHeatingBH.cu
     DisorderHeatingBHManager.cu)

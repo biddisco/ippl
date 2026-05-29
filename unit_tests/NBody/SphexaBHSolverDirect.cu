@@ -28,10 +28,18 @@
 #include "ryoanji/nbody/direct.cuh"
 #include "ryoanji/nbody/types.h"
 
+using ippl::nbody::DoublePrecision;
 using ippl::nbody::SphexaBHSolver;
 using ippl::nbody::SphexaParticleContainer;
 
 namespace {
+
+using C = SphexaParticleContainer<DoublePrecision, 3>;
+constexpr auto kIdxCharge = C::idxOf<"charge">;
+constexpr auto kIdxID     = C::idxOf<"ID">;
+constexpr auto kIdxPx     = C::idxOf<"Px">;
+constexpr auto kIdxPy     = C::idxOf<"Py">;
+constexpr auto kIdxPz     = C::idxOf<"Pz">;
 
 constexpr unsigned kN             = 4096;
 constexpr unsigned kBucketSize    = 64;
@@ -67,9 +75,10 @@ T* deviceAlloc(std::size_t n) {
 
 TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     using T = double;
+    using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<T, 3> pc(
+    SphexaParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -79,7 +88,7 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     pc.create(kN);
 
     std::vector<T> xPre(kN), yPre(kN), zPre(kN), hPre(kN, 1.0e-2), qPre(kN, 1.0);
-    std::vector<typename SphexaParticleContainer<T, 3>::IdType> idPre(kN);
+    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre(kN);
     ::srand48(/*seed=*/424242);
     for (unsigned i = 0; i < kN; ++i) {
         xPre[i]  = drand48();
@@ -88,18 +97,20 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
         idPre[i] = i;
     }
 
-    uploadHost(xPre,  pc.getRxRaw());
-    uploadHost(yPre,  pc.getRyRaw());
-    uploadHost(zPre,  pc.getRzRaw());
-    uploadHost(hPre,  pc.getHRaw());
-    uploadHost(qPre,  pc.getChargeRaw());
-    uploadHost(idPre, pc.getIDRaw());
+    uploadHost(xPre,  getRaw<"Rx">(pc));
+    uploadHost(yPre,  getRaw<"Ry">(pc));
+    uploadHost(zPre,  getRaw<"Rz">(pc));
+    uploadHost(hPre,  getRaw<"h">(pc));
+    uploadHost(qPre,  getRaw<"charge">(pc));
+    uploadHost(idPre, getRaw<"ID">(pc));
 
-    typename SphexaBHSolver<T, 3>::Params params;
+    typename SphexaBHSolver<P, 3>::Params params;
     params.G         = T(1);
     params.numShells = 0;
 
-    SphexaBHSolver<T, 3> solver(pc, params);
+    SphexaBHSolver<P, 3> solver(pc, params);
+    pc.setUniformH(0.01);
+    pc.updateGrav<kIdxCharge, kIdxID, kIdxPx, kIdxPy, kIdxPz>();
     solver.runSolver();
 
     const unsigned start      = pc.startIndex();
@@ -131,16 +142,16 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     ryoanji::directSum(
         /*first=*/start, /*last=*/end, /*numBodies=*/end,
         boxL, /*numShells=*/0,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getChargeRaw(), pc.getHRaw(),
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"charge">(pc), getRaw<"h">(pc),
         refPx, refAx, refAy, refAz);
 
     cudaDeviceSynchronize();
 
     std::vector<T> bhAx, bhAy, bhAz, dirAx, dirAy, dirAz;
-    downloadDevice(pc.getExRaw(), nWithHalos, bhAx);
-    downloadDevice(pc.getEyRaw(), nWithHalos, bhAy);
-    downloadDevice(pc.getEzRaw(), nWithHalos, bhAz);
+    downloadDevice(getRaw<"Ex">(pc), nWithHalos, bhAx);
+    downloadDevice(getRaw<"Ey">(pc), nWithHalos, bhAy);
+    downloadDevice(getRaw<"Ez">(pc), nWithHalos, bhAz);
     downloadDevice(refAx, nWithHalos, dirAx);
     downloadDevice(refAy, nWithHalos, dirAy);
     downloadDevice(refAz, nWithHalos, dirAz);

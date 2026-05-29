@@ -1,4 +1,4 @@
-// Sanity test for ippl::nbody::SphexaParticleContainer<double, 3>.
+// Sanity test for ippl::nbody::SphexaParticleContainer<DoublePrecision, 3>.
 //
 // Verifies that update() (which wraps cstone::Domain::sync) correctly:
 //   1. preserves the particle count on a single rank,
@@ -20,6 +20,7 @@
 #include "NBody/SphexaParticleContainer.hpp"
 #include "cstone/sfc/box.hpp"
 
+using ippl::nbody::DoublePrecision;
 using ippl::nbody::SphexaParticleContainer;
 
 namespace {
@@ -44,9 +45,9 @@ void uploadHost(const std::vector<T>& host, T* dPtr) {
     ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy H2D failed: " << cudaGetErrorString(err);
 }
 
-using IdType = SphexaParticleContainer<double, 3>::IdType;
+using IdType = SphexaParticleContainer<DoublePrecision, 3>::IdType;
 
-void verifyLockstep(SphexaParticleContainer<double, 3>& pc,
+void verifyLockstep(SphexaParticleContainer<DoublePrecision, 3>& pc,
                     const std::vector<double>& xPre,
                     const std::vector<double>& yPre,
                     const std::vector<double>& zPre) {
@@ -60,10 +61,10 @@ void verifyLockstep(SphexaParticleContainer<double, 3>& pc,
 
     std::vector<double> xPost, yPost, zPost;
     std::vector<IdType> idPost;
-    downloadDevice(pc.getRxRaw(), nWithHalos, xPost);
-    downloadDevice(pc.getRyRaw(), nWithHalos, yPost);
-    downloadDevice(pc.getRzRaw(), nWithHalos, zPost);
-    downloadDevice(pc.getIDRaw(), nWithHalos, idPost);
+    downloadDevice(getRaw<"Rx">(pc), nWithHalos, xPost);
+    downloadDevice(getRaw<"Ry">(pc), nWithHalos, yPost);
+    downloadDevice(getRaw<"Rz">(pc), nWithHalos, zPost);
+    downloadDevice(getRaw<"ID">(pc), nWithHalos, idPost);
 
     std::unordered_set<IdType> seen;
     seen.reserve(end - start);
@@ -88,7 +89,7 @@ void verifyLockstep(SphexaParticleContainer<double, 3>& pc,
 TEST(SphexaParticleContainer, SyncPermutesAttributesInLockstep) {
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<double, 3> pc(
+    SphexaParticleContainer<DoublePrecision, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         /*boxLoHi=*/std::array<double, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -107,11 +108,11 @@ TEST(SphexaParticleContainer, SyncPermutesAttributesInLockstep) {
         idPre[i] = static_cast<IdType>(i);
     }
 
-    uploadHost(xPre,  pc.getRxRaw());
-    uploadHost(yPre,  pc.getRyRaw());
-    uploadHost(zPre,  pc.getRzRaw());
-    uploadHost(hPre,  pc.getHRaw());
-    uploadHost(idPre, pc.getIDRaw());
+    uploadHost(xPre,  getRaw<"Rx">(pc));
+    uploadHost(yPre,  getRaw<"Ry">(pc));
+    uploadHost(zPre,  getRaw<"Rz">(pc));
+    uploadHost(hPre,  getRaw<"h">(pc));
+    uploadHost(idPre, getRaw<"ID">(pc));
 
     pc.update();
     verifyLockstep(pc, xPre, yPre, zPre);

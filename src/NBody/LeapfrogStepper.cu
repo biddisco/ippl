@@ -60,8 +60,8 @@ void leapfrogKickHalf(SphexaParticleContainer<P, 3>& pc, typename P::Tc dt) {
     if (n == 0) { return; }
     kickHalfKernel<Tc, Ta><<<gridFor(n), kBlockSize>>>(
         start, n,
-        pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw(),
-        pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw(),
+        getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc),
+        getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
         Tc(0.5) * dt);
 }
 
@@ -74,8 +74,8 @@ void leapfrogKick(SphexaParticleContainer<P, 3>& pc, typename P::Tc dt) {
     if (n == 0) { return; }
     kickHalfKernel<Tc, Ta><<<gridFor(n), kBlockSize>>>(
         start, n,
-        pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw(),
-        pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw(),
+        getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc),
+        getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
         dt);
 }
 
@@ -87,8 +87,8 @@ void leapfrogDrift(SphexaParticleContainer<P, 3>& pc, typename P::Tc dt) {
     if (n == 0) { return; }
     driftKernel<Tc><<<gridFor(n), kBlockSize>>>(
         start, n,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw(),
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
         dt);
 }
 

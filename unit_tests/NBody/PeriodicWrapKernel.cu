@@ -15,6 +15,7 @@
 #include "NBody/SphexaParticleContainer.hpp"
 #include "NBody/PeriodicWrap.hpp"
 
+using ippl::nbody::DoublePrecision;
 using ippl::nbody::SphexaParticleContainer;
 using ippl::nbody::wrapToBox;
 
@@ -43,19 +44,23 @@ void uploadHost(const std::vector<T>& host, T* dPtr) {
 // Generate kN positions deliberately scattered across [-2.5, +2.5)^3 so wrapping
 // is non-trivial on every periodic axis. Returns by reference. h is uniform; ID
 // is i. Open / periodic boundary choice is the caller's job.
-template <class T>
+template <class P>
 void seedScatteredPositions(unsigned long seed,
-                            std::vector<T>& x, std::vector<T>& y, std::vector<T>& z,
-                            std::vector<T>& h,
-                            std::vector<typename SphexaParticleContainer<T, 3>::IdType>& id) {
+                            std::vector<typename P::Tc>& x,
+                            std::vector<typename P::Tc>& y,
+                            std::vector<typename P::Tc>& z,
+                            std::vector<typename P::Th>& h,
+                            std::vector<typename SphexaParticleContainer<P, 3>::IdType>& id) {
+    using Tc = typename P::Tc;
+    using Th = typename P::Th;
     x.resize(kN); y.resize(kN); z.resize(kN);
-    h.assign(kN, T(1.0e-2));
+    h.assign(kN, Th(1.0e-2));
     id.resize(kN);
     ::srand48(seed);
     for (unsigned i = 0; i < kN; ++i) {
-        x[i]  = T(-2.5 + 5.0 * drand48());
-        y[i]  = T(-2.5 + 5.0 * drand48());
-        z[i]  = T(-2.5 + 5.0 * drand48());
+        x[i]  = Tc(-2.5 + 5.0 * drand48());
+        y[i]  = Tc(-2.5 + 5.0 * drand48());
+        z[i]  = Tc(-2.5 + 5.0 * drand48());
         id[i] = i;
     }
 }
@@ -71,9 +76,10 @@ T expectedWrap(T r, T lo, T L) {
 
 TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
     using T = double;
+    using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<T, 3> pc(
+    SphexaParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -83,14 +89,14 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
     pc.create(kN);
 
     std::vector<T> xPre, yPre, zPre, hPre;
-    std::vector<typename SphexaParticleContainer<T, 3>::IdType> idPre;
-    seedScatteredPositions<T>(/*seed=*/231, xPre, yPre, zPre, hPre, idPre);
+    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
+    seedScatteredPositions<P>(/*seed=*/231, xPre, yPre, zPre, hPre, idPre);
 
-    uploadHost(xPre,  pc.getRxRaw());
-    uploadHost(yPre,  pc.getRyRaw());
-    uploadHost(zPre,  pc.getRzRaw());
-    uploadHost(hPre,  pc.getHRaw());
-    uploadHost(idPre, pc.getIDRaw());
+    uploadHost(xPre,  getRaw<"Rx">(pc));
+    uploadHost(yPre,  getRaw<"Ry">(pc));
+    uploadHost(zPre,  getRaw<"Rz">(pc));
+    uploadHost(hPre,  getRaw<"h">(pc));
+    uploadHost(idPre, getRaw<"ID">(pc));
 
     // pc.update() with out-of-box positions would fault inside cstone's SFC key
     // computation. Sync once with in-box positions to populate startIndex/endIndex,
@@ -105,17 +111,17 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
             yClamp[i] = drand48();
             zClamp[i] = drand48();
         }
-        uploadHost(xClamp, pc.getRxRaw());
-        uploadHost(yClamp, pc.getRyRaw());
-        uploadHost(zClamp, pc.getRzRaw());
+        uploadHost(xClamp, getRaw<"Rx">(pc));
+        uploadHost(yClamp, getRaw<"Ry">(pc));
+        uploadHost(zClamp, getRaw<"Rz">(pc));
         pc.update();
     }
 
-    uploadHost(xPre, pc.getRxRaw());
-    uploadHost(yPre, pc.getRyRaw());
-    uploadHost(zPre, pc.getRzRaw());
+    uploadHost(xPre, getRaw<"Rx">(pc));
+    uploadHost(yPre, getRaw<"Ry">(pc));
+    uploadHost(zPre, getRaw<"Rz">(pc));
 
-    wrapToBox<T>(pc);
+    wrapToBox<P>(pc);
     cudaDeviceSynchronize();
 
     const unsigned start = pc.startIndex();
@@ -123,9 +129,9 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
     ASSERT_EQ(end - start, kN);
 
     std::vector<T> xPost, yPost, zPost;
-    downloadDevice(pc.getRxRaw(), end, xPost);
-    downloadDevice(pc.getRyRaw(), end, yPost);
-    downloadDevice(pc.getRzRaw(), end, zPost);
+    downloadDevice(getRaw<"Rx">(pc), end, xPost);
+    downloadDevice(getRaw<"Ry">(pc), end, yPost);
+    downloadDevice(getRaw<"Rz">(pc), end, zPost);
 
     for (unsigned j = start; j < end; ++j) {
         EXPECT_GE(xPost[j], 0.0); EXPECT_LT(xPost[j], 1.0) << "x j=" << j;
@@ -136,9 +142,10 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
 
 TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
     using T = double;
+    using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<T, 3> pc(
+    SphexaParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -150,38 +157,38 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
     // Sync with in-box positions so the container has valid start/end indices.
     {
         std::vector<T> x(kN), y(kN), z(kN), h(kN, 1.0e-2);
-        std::vector<typename SphexaParticleContainer<T, 3>::IdType> id(kN);
+        std::vector<typename SphexaParticleContainer<P, 3>::IdType> id(kN);
         ::srand48(/*seed=*/2320);
         for (unsigned i = 0; i < kN; ++i) {
             x[i] = drand48(); y[i] = drand48(); z[i] = drand48();
             id[i] = i;
         }
-        uploadHost(x,  pc.getRxRaw());
-        uploadHost(y,  pc.getRyRaw());
-        uploadHost(z,  pc.getRzRaw());
-        uploadHost(h,  pc.getHRaw());
-        uploadHost(id, pc.getIDRaw());
+        uploadHost(x,  getRaw<"Rx">(pc));
+        uploadHost(y,  getRaw<"Ry">(pc));
+        uploadHost(z,  getRaw<"Rz">(pc));
+        uploadHost(h,  getRaw<"h">(pc));
+        uploadHost(id, getRaw<"ID">(pc));
         pc.update();
     }
 
     // Now overwrite with deliberately-out-of-box positions.
     std::vector<T> xPre, yPre, zPre, hPre;
-    std::vector<typename SphexaParticleContainer<T, 3>::IdType> idPre;
-    seedScatteredPositions<T>(/*seed=*/233, xPre, yPre, zPre, hPre, idPre);
-    uploadHost(xPre, pc.getRxRaw());
-    uploadHost(yPre, pc.getRyRaw());
-    uploadHost(zPre, pc.getRzRaw());
+    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
+    seedScatteredPositions<P>(/*seed=*/233, xPre, yPre, zPre, hPre, idPre);
+    uploadHost(xPre, getRaw<"Rx">(pc));
+    uploadHost(yPre, getRaw<"Ry">(pc));
+    uploadHost(zPre, getRaw<"Rz">(pc));
 
-    wrapToBox<T>(pc);
+    wrapToBox<P>(pc);
     cudaDeviceSynchronize();
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
 
     std::vector<T> xPost, yPost, zPost;
-    downloadDevice(pc.getRxRaw(), end, xPost);
-    downloadDevice(pc.getRyRaw(), end, yPost);
-    downloadDevice(pc.getRzRaw(), end, zPost);
+    downloadDevice(getRaw<"Rx">(pc), end, xPost);
+    downloadDevice(getRaw<"Ry">(pc), end, yPost);
+    downloadDevice(getRaw<"Rz">(pc), end, zPost);
 
     // Open BCs → wrapToBox is a no-op (no kernel launch). Bytes should match
     // exactly what we uploaded.
@@ -195,9 +202,10 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
 
 TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
     using T = double;
+    using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<T, 3> pc(
+    SphexaParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -208,37 +216,37 @@ TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
 
     {
         std::vector<T> x(kN), y(kN), z(kN), h(kN, 1.0e-2);
-        std::vector<typename SphexaParticleContainer<T, 3>::IdType> id(kN);
+        std::vector<typename SphexaParticleContainer<P, 3>::IdType> id(kN);
         ::srand48(/*seed=*/2330);
         for (unsigned i = 0; i < kN; ++i) {
             x[i] = drand48(); y[i] = drand48(); z[i] = drand48();
             id[i] = i;
         }
-        uploadHost(x,  pc.getRxRaw());
-        uploadHost(y,  pc.getRyRaw());
-        uploadHost(z,  pc.getRzRaw());
-        uploadHost(h,  pc.getHRaw());
-        uploadHost(id, pc.getIDRaw());
+        uploadHost(x,  getRaw<"Rx">(pc));
+        uploadHost(y,  getRaw<"Ry">(pc));
+        uploadHost(z,  getRaw<"Rz">(pc));
+        uploadHost(h,  getRaw<"h">(pc));
+        uploadHost(id, getRaw<"ID">(pc));
         pc.update();
     }
 
     std::vector<T> xPre, yPre, zPre, hPre;
-    std::vector<typename SphexaParticleContainer<T, 3>::IdType> idPre;
-    seedScatteredPositions<T>(/*seed=*/235, xPre, yPre, zPre, hPre, idPre);
-    uploadHost(xPre, pc.getRxRaw());
-    uploadHost(yPre, pc.getRyRaw());
-    uploadHost(zPre, pc.getRzRaw());
+    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
+    seedScatteredPositions<P>(/*seed=*/235, xPre, yPre, zPre, hPre, idPre);
+    uploadHost(xPre, getRaw<"Rx">(pc));
+    uploadHost(yPre, getRaw<"Ry">(pc));
+    uploadHost(zPre, getRaw<"Rz">(pc));
 
-    wrapToBox<T>(pc);
+    wrapToBox<P>(pc);
     cudaDeviceSynchronize();
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
 
     std::vector<T> xPost, yPost, zPost;
-    downloadDevice(pc.getRxRaw(), end, xPost);
-    downloadDevice(pc.getRyRaw(), end, yPost);
-    downloadDevice(pc.getRzRaw(), end, zPost);
+    downloadDevice(getRaw<"Rx">(pc), end, xPost);
+    downloadDevice(getRaw<"Ry">(pc), end, yPost);
+    downloadDevice(getRaw<"Rz">(pc), end, zPost);
 
     // x is periodic → wrapped. y and z are open → unchanged.
     for (unsigned j = start; j < end; ++j) {

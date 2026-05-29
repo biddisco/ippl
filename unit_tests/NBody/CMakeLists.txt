@@ -98,6 +98,24 @@ target_link_libraries(LeapfrogStepperBasics PRIVATE
 set_target_properties(LeapfrogStepperBasics PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
+add_ippl_test(SphexaContainerAttribute
+  SOURCES SphexaContainerAttribute.cu
+  NO_MPI
+  LABELS nbody gpu)
+target_link_libraries(SphexaContainerAttribute PRIVATE
+  ippl::nbody)
+set_target_properties(SphexaContainerAttribute PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+
+add_ippl_test(SphexaContainerFieldList
+  SOURCES SphexaContainerFieldList.cu
+  NO_MPI
+  LABELS nbody gpu)
+target_link_libraries(SphexaContainerFieldList PRIVATE
+  ippl::nbody)
+set_target_properties(SphexaContainerFieldList PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
+
 # Periodic-wrap kernel test: covers all-periodic, all-open, and mixed BCs.
 add_ippl_test(PeriodicWrapKernel
   SOURCES PeriodicWrapKernel.cu

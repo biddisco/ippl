@@ -3,24 +3,20 @@
 
 #include <array>
 #include <cstdint>
-#include <memory>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 #include <Kokkos_Core.hpp>
 
+#include "cstone/cuda/device_vector.h"
+#include "cstone/domain/domain.hpp"
+#include "cstone/fields/field_get.hpp"
 #include "cstone/sfc/box.hpp"
+#include "cstone/tree/definitions.h"
 
 #include "NBody/BHPrecision.hpp"
 #include "NBody/ParticleAttribBase.hpp"
-
-// Forward declarations of cstone types exposed by domain() accessors below.
-// Consumers that only construct/use particle attributes don't need these resolved;
-// callers that invoke methods on the returned reference (e.g. SphexaBHSolver) include
-// cstone/domain/domain.hpp directly to obtain the full type.
-namespace cstone {
-struct GpuTag;
-template <class KeyType, class T, class Accelerator>
-class Domain;
-} // namespace cstone
 
 namespace ippl::nbody {
 
@@ -50,6 +46,45 @@ public:
     using IdType     = std::uint32_t;
     using IDView     = Kokkos::View<IdType*, Kokkos::CudaSpace,
                                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+    using DomainT = cstone::Domain<KeyType, Tc, cstone::GpuTag>;
+
+    // Order must match dataTuple() below; cstone::get<"Name">(pc) maps a string to
+    // the tuple slot via getFieldIndex(name, fieldNames).
+    static constexpr std::array<std::string_view, 12> fieldNames{
+        "Rx", "Ry", "Rz", "h", "ID", "charge",
+        "Px", "Py", "Pz", "Ex", "Ey", "Ez"};
+
+    using DataTupleT = std::tuple<
+        cstone::DeviceVector<Tc>&,
+        cstone::DeviceVector<Tc>&,
+        cstone::DeviceVector<Tc>&,
+        cstone::DeviceVector<Th>&,
+        cstone::DeviceVector<IdType>&,
+        cstone::DeviceVector<Tm>&,
+        cstone::DeviceVector<Tc>&,
+        cstone::DeviceVector<Tc>&,
+        cstone::DeviceVector<Tc>&,
+        cstone::DeviceVector<Ta>&,
+        cstone::DeviceVector<Ta>&,
+        cstone::DeviceVector<Ta>&>;
+
+    using DataTupleConstT = std::tuple<
+        const cstone::DeviceVector<Tc>&,
+        const cstone::DeviceVector<Tc>&,
+        const cstone::DeviceVector<Tc>&,
+        const cstone::DeviceVector<Th>&,
+        const cstone::DeviceVector<IdType>&,
+        const cstone::DeviceVector<Tm>&,
+        const cstone::DeviceVector<Tc>&,
+        const cstone::DeviceVector<Tc>&,
+        const cstone::DeviceVector<Tc>&,
+        const cstone::DeviceVector<Ta>&,
+        const cstone::DeviceVector<Ta>&,
+        const cstone::DeviceVector<Ta>&>;
+
+    DataTupleT      dataTuple();
+    DataTupleConstT dataTuple() const;
 
     SphexaParticleContainer(int rank, int nRanks,
                             unsigned bucketSize, unsigned bucketSizeFocus,
@@ -88,91 +123,141 @@ public:
 
     // Propagate the `charge` array into halo entries via cstone halo exchange.
     // Required before BH traversal so source charges at halo indices are valid.
-    // On nRanks=1 this is a no-op. Send/receive scratch buffers are owned by Impl.
+    // On nRanks=1 this is a no-op.
     void exchangeChargeHalos();
+
+    // Compile-time index of field Name in fieldNames.
+    template <util::StructuralString Name>
+    static constexpr std::size_t idxOf =
+        cstone::getFieldIndex(Name.value, fieldNames);
+
+    // SFC-sort + redistribute. ConservedIdxs lists dataTuple() slots that get
+    // permuted + redistributed alongside positions.
+    template <std::size_t... ConservedIdxs>
+    void update() {
+        auto t = dataTuple();
+        domain_.sync(
+            particleKeys,
+            Rx, Ry, Rz, h,
+            std::tie(std::get<ConservedIdxs>(t)...),
+            std::tie(scratch0, scratch1, scratchTh, scratchSfc));
+    }
+
+    // Gravity-aware sync. MSlotIdx is the dataTuple() slot fed into syncGrav's
+    // mass argument (gravity expansion centers / MAC). ConservedIdxs lists the
+    // conserved slots permuted in lockstep with positions.
+    template <std::size_t MSlotIdx, std::size_t... ConservedIdxs>
+    void updateGrav() {
+        auto t = dataTuple();
+        domain_.syncGrav(
+            particleKeys,
+            Rx, Ry, Rz, hZero,
+            std::get<MSlotIdx>(t),
+            std::tie(std::get<ConservedIdxs>(t)...),
+            std::tie(scratch0, scratch1, scratchTh, scratchSfc));
+        refreshPostSyncGrav();
+    }
+
+    // Halo exchange for an arbitrary set of source field slots.
+    template <std::size_t... HaloIdxs>
+    void exchangeHalos() {
+        auto t = dataTuple();
+        domain_.exchangeHalos(
+            std::tie(std::get<HaloIdxs>(t)...),
+            haloSendBuf, haloRecvBuf);
+    }
+
+    // Raw pointer to the storage of field Name. The field must be one of fieldNames.
+    template <util::StructuralString Name>
+    auto* getRaw() {
+        return std::get<idxOf<Name>>(dataTuple()).data();
+    }
+    template <util::StructuralString Name>
+    auto const* getRaw() const {
+        return std::get<idxOf<Name>>(dataTuple()).data();
+    }
+
+    // Unmanaged Kokkos::View over the storage of field Name.
+    template <util::StructuralString Name>
+    auto getView() {
+        auto& dv = std::get<idxOf<Name>>(dataTuple());
+        using T  = typename std::remove_reference_t<decltype(dv)>::value_type;
+        return KView<T>(dv.data(), dv.size());
+    }
+    template <util::StructuralString Name>
+    auto getView() const {
+        auto& dv = std::get<idxOf<Name>>(dataTuple());
+        using T  = typename std::remove_reference_t<decltype(dv)>::value_type;
+        return KViewConst<T>(dv.data(), dv.size());
+    }
 
     LocalIndex getLocalNum() const;
     LocalIndex startIndex() const;
     LocalIndex endIndex() const;
     LocalIndex nWithHalos() const;
 
-    // Built-in vector attribute R (positions): three independent scalar arrays.
-    Tc* getRxRaw();
-    Tc* getRyRaw();
-    Tc* getRzRaw();
-    const Tc* getRxRaw() const;
-    const Tc* getRyRaw() const;
-    const Tc* getRzRaw() const;
-
-    KView<Tc> getRxView();
-    KView<Tc> getRyView();
-    KView<Tc> getRzView();
-    KViewConst<Tc> getRxView() const;
-    KViewConst<Tc> getRyView() const;
-    KViewConst<Tc> getRzView() const;
-
-    // Built-in scalar attributes. h is the SPH-convention smoothing length used by
-    // domain.sync's halo discovery; ID is a stable particle identifier.
-    Th* getHRaw();
-    const Th* getHRaw() const;
-    KView<Th> getHView();
-    KViewConst<Th> getHView() const;
-
     // Record the uniform smoothing length used by ryoanji P2P softening.
-    // Required: updateGrav() passes a dummy h=0 buffer to cstone (so halo
-    // bounding boxes are not inflated by 2*h*factor), then refills h to
-    // nWithHalos with this value for ryoanji. Caller must call this once
-    // after initializing particles, before the first updateGrav().
-    // Assumes h is uniform across all particles; non-uniform h is unsupported
-    // on this path.
+    // updateGrav() passes a dummy h=0 buffer to cstone (so halo bounding boxes
+    // are not inflated by 2*h*factor), then refills h to nWithHalos with this
+    // value for ryoanji. Caller must call this once after initializing particles,
+    // before the first updateGrav(). Assumes h is uniform; non-uniform unsupported.
     void setUniformH(Th val);
 
     // Switch the post-syncGrav h refill from uniform (fill with uniformH) to
-    // leaf-derived (per-particle h = local octree leaf edge length). Off by
-    // default. Orthogonal to setUniformH: when on, uniformH is only consulted
-    // on the first step before any syncGrav has populated the focus tree.
+    // leaf-derived (per-particle h = local octree leaf edge length). Off by default.
     void setLeafBasedH(bool on);
-
-    IdType* getIDRaw();
-    const IdType* getIDRaw() const;
-    IDView getIDView();
-
-    // Built-in scalar source attribute (charge for plasma; mass for gravity).
-    // Threaded through Domain::syncGrav by updateGrav(); read by the BH solver
-    // as the monopole source for the multipole upsweep + traversal.
-    Tm* getChargeRaw();
-    const Tm* getChargeRaw() const;
-    KView<Tm> getChargeView();
-    KViewConst<Tm> getChargeView() const;
-
-    // Built-in acceleration / E-field outputs. Written by SphexaBHSolver::runSolver().
-    Ta* getExRaw();   Ta* getEyRaw();   Ta* getEzRaw();
-    const Ta* getExRaw() const; const Ta* getEyRaw() const; const Ta* getEzRaw() const;
-    KView<Ta> getExView();  KView<Ta> getEyView();  KView<Ta> getEzView();
-    KViewConst<Ta> getExView() const; KViewConst<Ta> getEyView() const; KViewConst<Ta> getEzView() const;
-
-    // Built-in velocity attribute. Owned-state only — never appears in any sync/scratch
-    // tuple. Resized to nLocal at create() and to nWithHalos by updateGrav() so consumer
-    // kernels can index uniformly over the position-array extent. Halo-region content
-    // of P is undefined; the leapfrog stepper iterates [startIndex(), endIndex()) only.
-    Tc* getPxRaw();   Tc* getPyRaw();   Tc* getPzRaw();
-    const Tc* getPxRaw() const; const Tc* getPyRaw() const; const Tc* getPzRaw() const;
-    KView<Tc> getPxView();  KView<Tc> getPyView();  KView<Tc> getPzView();
-    KViewConst<Tc> getPxView() const; KViewConst<Tc> getPyView() const; KViewConst<Tc> getPzView() const;
 
     cstone::Box<Tc> box() const;
 
     // Underlying cstone::Domain reference. Used by SphexaBHSolver to call
-    // exchangeHalos / focusTree / globalTree / layout. Returning the full type means
-    // any caller that invokes methods on it must include cstone/domain/domain.hpp.
-    using DomainT = cstone::Domain<KeyType, Tc, cstone::GpuTag>;
-    DomainT&       domain();
-    const DomainT& domain() const;
+    // exchangeHalos / focusTree / globalTree / layout.
+    DomainT&       domain()       { return domain_; }
+    const DomainT& domain() const { return domain_; }
 
 private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+    void refreshPostSyncGrav();
+
+    DomainT                                  domain_;
+    cstone::DeviceVector<KeyType>            particleKeys;
+    cstone::DeviceVector<Tc>                 Rx, Ry, Rz;
+    cstone::DeviceVector<Th>                 h;
+    cstone::DeviceVector<IdType>             ID;
+    cstone::DeviceVector<Tm>                 charge;
+    cstone::DeviceVector<Ta>                 Ex, Ey, Ez;
+    cstone::DeviceVector<Tc>                 Px, Py, Pz;
+
+    cstone::DeviceVector<Tc>                 scratch0, scratch1;
+    cstone::DeviceVector<Th>                 scratchTh;
+    cstone::DeviceVector<cstone::LocalIndex> scratchSfc;
+
+    cstone::DeviceVector<Tm>                 haloSendBuf, haloRecvBuf;
+
+    cstone::DeviceVector<Th>                 hZero;
+    Th                                       uniformH{Th(0)};
+    bool                                     leafBasedH{false};
+
+    std::vector<ParticleAttribBase*>         userAttribs;
 };
+
+// Free-function shortcuts so callers in templated contexts don't need
+// `.template` to invoke the member-template accessor.
+template <util::StructuralString Name, class P, unsigned Dim>
+auto* getRaw(SphexaParticleContainer<P, Dim>& pc) {
+    return pc.template getRaw<Name>();
+}
+template <util::StructuralString Name, class P, unsigned Dim>
+auto const* getRaw(const SphexaParticleContainer<P, Dim>& pc) {
+    return pc.template getRaw<Name>();
+}
+
+template <util::StructuralString Name, class P, unsigned Dim>
+auto getView(SphexaParticleContainer<P, Dim>& pc) {
+    return pc.template getView<Name>();
+}
+template <util::StructuralString Name, class P, unsigned Dim>
+auto getView(const SphexaParticleContainer<P, Dim>& pc) {
+    return pc.template getView<Name>();
+}
 
 } // namespace ippl::nbody
 

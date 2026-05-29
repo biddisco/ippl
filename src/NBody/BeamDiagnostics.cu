@@ -61,9 +61,9 @@ Triple<typename P::Tc> reduceMeanVelocity(SphexaParticleContainer<P, 3>& pc) {
     const unsigned end   = pc.endIndex();
     Triple<Tc> localSum{Tc(0), Tc(0), Tc(0)};
     if (end > start) {
-        thrust::device_ptr<const Tc> dPx(pc.getPxRaw());
-        thrust::device_ptr<const Tc> dPy(pc.getPyRaw());
-        thrust::device_ptr<const Tc> dPz(pc.getPzRaw());
+        thrust::device_ptr<const Tc> dPx(getRaw<"Px">(pc));
+        thrust::device_ptr<const Tc> dPy(getRaw<"Py">(pc));
+        thrust::device_ptr<const Tc> dPz(getRaw<"Pz">(pc));
         localSum.x = thrust::reduce(dPx + start, dPx + end, Tc(0), thrust::plus<Tc>());
         localSum.y = thrust::reduce(dPy + start, dPy + end, Tc(0), thrust::plus<Tc>());
         localSum.z = thrust::reduce(dPz + start, dPz + end, Tc(0), thrust::plus<Tc>());
@@ -81,7 +81,7 @@ Triple<typename P::Tc> reduceTemperature(SphexaParticleContainer<P, 3>& pc,
     Triple<Tc> localSum{Tc(0), Tc(0), Tc(0)};
     if (end > start) {
         VelMinusMeanSqFunctor<Tc> functor{
-            pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw(),
+            getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
             avgV.x, avgV.y, avgV.z};
         auto first = thrust::counting_iterator<unsigned>(start);
         auto last  = thrust::counting_iterator<unsigned>(end);

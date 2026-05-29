@@ -53,7 +53,7 @@ void wrapToBox(SphexaParticleContainer<P, 3>& pc) {
     const unsigned grid = (n + kBlockSize - 1) / kBlockSize;
     wrapKernel<Tc><<<grid, kBlockSize>>>(
         start, n,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
         box.xmin(), box.ymin(), box.zmin(),
         box.lx(),   box.ly(),   box.lz(),
         px, py, pz);

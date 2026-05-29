@@ -8,6 +8,7 @@
 #include "Utility/IpplTimings.h"
 
 #include "NBody/BHPrecision.hpp"
+#include "NBody/GpuTimer.hpp"
 #include "NBody/LeapfrogStepper.hpp"
 #include "NBody/PeriodicWrap.hpp"
 #include "NBody/SphexaBHSolver.hpp"
@@ -123,6 +124,7 @@ public:
             // per-step bh.stats printout are reserved for the advance() loop
             // so they reflect a pure per-step number directly comparable to
             // sphexa's "Gravity" timer.
+            prepareSolverInputs(/*collect=*/false);
             solver_m->runSolver(/*warmup=*/true);
         }
         post_initial_solve();
@@ -154,9 +156,10 @@ public:
 
 protected:
     // Required hooks -------------------------------------------------------
-    virtual void initializeContainer() = 0;
-    virtual void initializeParticles() = 0;
-    virtual void advanceImpl()         = 0;
+    virtual void initializeContainer()                = 0;
+    virtual void initializeParticles()                = 0;
+    virtual void advanceImpl()                        = 0;
+    virtual void prepareSolverInputs(bool collect)    = 0;
 
     // Optional hooks -------------------------------------------------------
     virtual void initializeSolverParams(SolverParams& /*p*/) {}
@@ -199,6 +202,7 @@ protected:
     void solve() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("solve");
         ScopedIpplTimer scope(t);
+        prepareSolverInputs(/*collect=*/true);
         solver_m->runSolver();
     }
 

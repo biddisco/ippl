@@ -83,10 +83,10 @@ void sampleDihIC(SphexaParticleContainer<P, 3>& pc,
     sampleKernel<Tc, Th, Tm><<<grid, kBlockSize>>>(
         /*start=*/0, localN, firstGlobal,
         beamRad, smoothingH,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw(),
-        pc.getChargeRaw(),
-        pc.getHRaw(),
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
+        getRaw<"charge">(pc),
+        getRaw<"h">(pc),
         seed);
     cudaDeviceSynchronize();
 }
@@ -178,8 +178,8 @@ BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc) {
     Tc local[12] = {Tc(0)};
     if (end > start) {
         BeamStatsFunctor<Tc> functor{
-            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-            pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw()};
+            getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+            getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc)};
         auto first = thrust::counting_iterator<unsigned>(start);
         auto last  = thrust::counting_iterator<unsigned>(end);
         BeamStatsRaw<Tc> sum = thrust::transform_reduce(
@@ -200,7 +200,7 @@ Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc) {
     const unsigned end   = pc.endIndex();
     Tc local[4] = {Tc(0), Tc(0), Tc(0), Tc(0)};
     if (end > start) {
-        AbsTripleFunctor<Tc, Ta> functor{pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw()};
+        AbsTripleFunctor<Tc, Ta> functor{getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc)};
         auto first = thrust::counting_iterator<unsigned>(start);
         auto last  = thrust::counting_iterator<unsigned>(end);
         auto sum = thrust::transform_reduce(

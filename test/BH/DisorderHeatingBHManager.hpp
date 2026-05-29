@@ -48,16 +48,7 @@ void sampleDihIC(SphexaParticleContainer<P, 3>& pc,
 namespace dih_detail {
 
 // Constant linear focusing toward the box origin, applied as an additive force
-// on top of the BH-computed Ex/Ey/Ez. Mirrors the reference DIH driver at
-// disorder_heating.cu:117 (`a -= strength · r / beamRad`).
-//
-// Sign: our integrator's full kick is `P -= dt · E`, so adding
-// `+ strength · R / beamRad` to E produces `dP = -dt · strength · R / beamRad`,
-// pushing P toward the origin — same effect as `a -= strength · r / bRad`
-// followed by `v += dt · a`.
-//
-// Mixed-precision: positions and `scale` are at Tc; Ex/Ey/Ez are at Ta. The
-// add converts the Tc·Tc product to Ta implicitly.
+// on top of the BH-computed Ex/Ey/Ez: Ex += (strength/beamRad) * Rx (same for y, z).
 template <class Tc, class Ta>
 __global__ void focusingKernel(unsigned start, unsigned n,
                                Tc scale,
@@ -90,8 +81,8 @@ inline void applyFocusing(SphexaParticleContainer<P, 3>& pc,
     const unsigned     grid       = (n + kBlockSize - 1) / kBlockSize;
     focusingKernel<Tc, Ta><<<grid, kBlockSize>>>(
         start, n, scale,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw());
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc));
 }
 
 // Copy a std::vector<double> of positions to a device buffer typed as Tc.
@@ -243,6 +234,25 @@ public:
         , boxHalf_m(boxHalfRef_m * scaleFactor(globalN)) {}
 
 protected:
+    void prepareSolverInputs(bool collect) override {
+        using C = SphexaParticleContainer<P, 3>;
+        constexpr auto idxCharge = C::template idxOf<"charge">;
+        constexpr auto idxID     = C::template idxOf<"ID">;
+        constexpr auto idxPx     = C::template idxOf<"Px">;
+        constexpr auto idxPy     = C::template idxOf<"Py">;
+        constexpr auto idxPz     = C::template idxOf<"Pz">;
+        {
+            static auto t = IpplTimings::getTimer("bh.syncGrav");
+            ippl::nbody::GpuTimer scope(t, collect);
+            this->pc().template updateGrav<idxCharge, idxID, idxPx, idxPy, idxPz>();
+        }
+        {
+            static auto t = IpplTimings::getTimer("bh.haloCharge");
+            ippl::nbody::GpuTimer scope(t, collect);
+            this->pc().template exchangeHalos<idxCharge>();
+        }
+    }
+
     void initializeContainer() override {
         using cstone::BoundaryType;
         const unsigned bucketSizeFocus = 64u;
@@ -274,15 +284,15 @@ protected:
 
         // File mode: hx/hy/hz already hold this rank's slice from loadDihPositions.
         const std::size_t localN = hx_m.size();
-        dih_detail::copyHostPositions<Tc>(this->pc().getRxRaw(), hx_m);
-        dih_detail::copyHostPositions<Tc>(this->pc().getRyRaw(), hy_m);
-        dih_detail::copyHostPositions<Tc>(this->pc().getRzRaw(), hz_m);
+        dih_detail::copyHostPositions<Tc>(getRaw<"Rx">(this->pc()), hx_m);
+        dih_detail::copyHostPositions<Tc>(getRaw<"Ry">(this->pc()), hy_m);
+        dih_detail::copyHostPositions<Tc>(getRaw<"Rz">(this->pc()), hz_m);
 
-        thrust::fill_n(thrust::device_ptr<Tm>(this->pc().getChargeRaw()), localN, Tm(1));
-        thrust::fill_n(thrust::device_ptr<Th>(this->pc().getHRaw()),      localN, smoothH_m);
-        thrust::fill_n(thrust::device_ptr<Tc>(this->pc().getPxRaw()),     localN, Tc(0));
-        thrust::fill_n(thrust::device_ptr<Tc>(this->pc().getPyRaw()),     localN, Tc(0));
-        thrust::fill_n(thrust::device_ptr<Tc>(this->pc().getPzRaw()),     localN, Tc(0));
+        thrust::fill_n(thrust::device_ptr<Tm>(getRaw<"charge">(this->pc())), localN, Tm(1));
+        thrust::fill_n(thrust::device_ptr<Th>(getRaw<"h">(this->pc())),      localN, smoothH_m);
+        thrust::fill_n(thrust::device_ptr<Tc>(getRaw<"Px">(this->pc())),     localN, Tc(0));
+        thrust::fill_n(thrust::device_ptr<Tc>(getRaw<"Py">(this->pc())),     localN, Tc(0));
+        thrust::fill_n(thrust::device_ptr<Tc>(getRaw<"Pz">(this->pc())),     localN, Tc(0));
         this->pc().setUniformH(smoothH_m);
 
         hx_m.clear(); hx_m.shrink_to_fit();

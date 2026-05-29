@@ -93,6 +93,25 @@ public:
 
 protected:
 
+    void prepareSolverInputs(bool collect) override {
+        using C = SphexaParticleContainer<P, 3>;
+        constexpr auto idxCharge = C::template idxOf<"charge">;
+        constexpr auto idxID     = C::template idxOf<"ID">;
+        constexpr auto idxPx     = C::template idxOf<"Px">;
+        constexpr auto idxPy     = C::template idxOf<"Py">;
+        constexpr auto idxPz     = C::template idxOf<"Pz">;
+        {
+            static auto t = IpplTimings::getTimer("bh.syncGrav");
+            ippl::nbody::GpuTimer scope(t, collect);
+            this->pc().template updateGrav<idxCharge, idxID, idxPx, idxPy, idxPz>();
+        }
+        {
+            static auto t = IpplTimings::getTimer("bh.haloCharge");
+            ippl::nbody::GpuTimer scope(t, collect);
+            this->pc().template exchangeHalos<idxCharge>();
+        }
+    }
+
     void initializeContainer() override {
         using cstone::BoundaryType;
         const unsigned bucketSizeFocus = 64u;

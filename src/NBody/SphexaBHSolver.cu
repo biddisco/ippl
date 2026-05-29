@@ -1,5 +1,7 @@
 #include "NBody/SphexaBHSolver.hpp"
 
+#include "NBody/GpuTimer.hpp"
+
 #include <cstdint>
 #include <cstdio>
 
@@ -20,24 +22,7 @@
 
 namespace ippl::nbody {
 
-namespace {
-
-class GpuTimer {
-public:
-    explicit GpuTimer(IpplTimings::TimerRef ref, bool collect = true)
-        : ref_(ref), collect_(collect) {
-        if (collect_) { IpplTimings::startTimer(ref_); }
-    }
-    ~GpuTimer() {
-        cudaDeviceSynchronize();
-        if (collect_) { IpplTimings::stopTimer(ref_); }
-    }
-private:
-    IpplTimings::TimerRef ref_;
-    bool                  collect_;
-};
-
-}  // namespace
+using ippl::nbody::GpuTimer;
 
 // Distributed BH+Ewald wrapper. Mirrors sphexa main/src/propagator/gravity_wrapper.hpp
 // (MultipoleHolderGpu::traverse): the MultipoleHolder owns the per-rank focus-tree
@@ -88,8 +73,6 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
     using Ta            = typename Impl::Ta;
     using MultipoleType = typename Impl::MultipoleType;
 
-    static IpplTimings::TimerRef tSync   = IpplTimings::getTimer("bh.syncGrav");
-    static IpplTimings::TimerRef tHalo   = IpplTimings::getTimer("bh.haloCharge");
     static IpplTimings::TimerRef tUpswp  = IpplTimings::getTimer("bh.upsweep");
     static IpplTimings::TimerRef tGroups = IpplTimings::getTimer("bh.groups");
     static IpplTimings::TimerRef tZeroE  = IpplTimings::getTimer("bh.zeroE");
@@ -97,9 +80,6 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
     static IpplTimings::TimerRef tEwald  = IpplTimings::getTimer("bh.ewald");
 
     const bool collect = !warmup;
-
-    { GpuTimer t(tSync, collect); pc.updateGrav(); }
-    { GpuTimer t(tHalo, collect); pc.exchangeChargeHalos(); }
 
     auto&         domain = pc.domain();
     const auto    box    = pc.box();
@@ -116,7 +96,7 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
     {
         GpuTimer t(tUpswp, collect);
         s.mHolder_.upsweep(
-            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(), pc.getChargeRaw(),
+            getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc), getRaw<"charge">(pc),
             domain.globalTree(), domain.focusTree(), domain.layout().data());
     }
 
@@ -125,7 +105,7 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
         GpuTimer t(tGroups, collect);
         grp = s.mHolder_.computeSpatialGroups(
             start, end,
-            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(), pc.getHRaw(),
+            getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc), getRaw<"h">(pc),
             domain.focusTree(), domain.layout().data(), box);
     }
 
@@ -134,9 +114,9 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
         const unsigned extent = pc.nWithHalos();
         if (extent > 0) {
             const std::size_t bytes = static_cast<std::size_t>(extent) * sizeof(Ta);
-            cudaMemsetAsync(pc.getExRaw(), 0, bytes);
-            cudaMemsetAsync(pc.getEyRaw(), 0, bytes);
-            cudaMemsetAsync(pc.getEzRaw(), 0, bytes);
+            cudaMemsetAsync(getRaw<"Ex">(pc), 0, bytes);
+            cudaMemsetAsync(getRaw<"Ey">(pc), 0, bytes);
+            cudaMemsetAsync(getRaw<"Ez">(pc), 0, bytes);
         }
     }
 
@@ -144,11 +124,11 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
         GpuTimer t(tBH, collect);
         s.mHolder_.compute(
             grp,
-            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-            pc.getChargeRaw(), pc.getHRaw(),
+            getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+            getRaw<"charge">(pc), getRaw<"h">(pc),
             Tc(params.G), numShells, box,
             /*ugrav=*/static_cast<Ta*>(nullptr),
-            pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw());
+            getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc));
     }
 
     // sphexa gravity_wrapper.hpp guard: ryoanji signals traversal-stack
@@ -210,11 +190,11 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
         ryoanji::computeGravityEwaldGpu(
             cstone::Vec3<Tc>{rootCenter[0], rootCenter[1], rootCenter[2]},
             rootM, grp,
-            pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-            pc.getChargeRaw(),
+            getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+            getRaw<"charge">(pc),
             box, static_cast<float>(params.G),
             /*ugrav=*/static_cast<Ta*>(nullptr),
-            pc.getExRaw(), pc.getEyRaw(), pc.getEzRaw(),
+            getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc),
             /*ugravTot=*/&ugravTotDummy,
             params.ewaldSettings);
     }

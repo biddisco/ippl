@@ -111,7 +111,7 @@ typename P::Tc reduceExSumSq(SphexaParticleContainer<P, 3>& pc) {
 
     Tc local = Tc(0);
     if (end > start) {
-        thrust::device_ptr<const Ta> Ex(pc.getExRaw());
+        thrust::device_ptr<const Ta> Ex(getRaw<"Ex">(pc));
         local = thrust::transform_reduce(Ex + start, Ex + end,
                                          SquarePromoteOp<Tc, Ta>(),
                                          Tc(0), thrust::plus<Tc>());
@@ -155,10 +155,10 @@ void sampleLandauIC(SphexaParticleContainer<P, 3>& pc,
         xmin, ymin, zmin, Lx, Ly, Lz,
         alpha, kx, ky, kz,
         sigmaV, qPerParticle, smoothingH,
-        pc.getRxRaw(), pc.getRyRaw(), pc.getRzRaw(),
-        pc.getPxRaw(), pc.getPyRaw(), pc.getPzRaw(),
-        pc.getChargeRaw(),
-        pc.getHRaw(),
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
+        getRaw<"charge">(pc),
+        getRaw<"h">(pc),
         seed);
     cudaDeviceSynchronize();
 }
