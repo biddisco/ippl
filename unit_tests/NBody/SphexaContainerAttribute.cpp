@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <vector>
 
-#include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
 #include "Ippl.h"
@@ -15,10 +14,13 @@
 #include "NBody/BHPrecision.hpp"
 #include "NBody/ParticleAttrib.hpp"
 #include "NBody/SphexaParticleContainer.hpp"
+#include "NBodyTestUtil.hpp"
 
 using ippl::nbody::DoublePrecision;
 using ippl::nbody::ParticleAttrib;
 using ippl::nbody::SphexaParticleContainer;
+using ippl::nbody::test::downloadDevice;
+using ippl::nbody::test::uploadHost;
 
 namespace {
 
@@ -26,21 +28,6 @@ constexpr unsigned kN             = 1024;
 constexpr unsigned kBucketSize    = 64;
 constexpr unsigned kBucketSizeFoc = 64;
 constexpr float    kTheta         = 0.5f;
-
-template <class T>
-void downloadDevice(const T* dPtr, std::size_t n, std::vector<T>& host) {
-    host.resize(n);
-    if (n == 0) { return; }
-    cudaError_t err = cudaMemcpy(host.data(), dPtr, n * sizeof(T), cudaMemcpyDeviceToHost);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy D2H failed: " << cudaGetErrorString(err);
-}
-
-template <class T>
-void uploadHost(const std::vector<T>& host, T* dPtr) {
-    if (host.empty()) { return; }
-    cudaError_t err = cudaMemcpy(dPtr, host.data(), host.size() * sizeof(T), cudaMemcpyHostToDevice);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy H2D failed: " << cudaGetErrorString(err);
-}
 
 SphexaParticleContainer<DoublePrecision, 3> makeContainer() {
     using cstone::BoundaryType;

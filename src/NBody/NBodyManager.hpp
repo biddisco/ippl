@@ -7,6 +7,7 @@
 #include "Manager/BaseManager.h"
 #include "Utility/IpplTimings.h"
 
+#include "NBody/Accelerator.hpp"
 #include "NBody/BHPrecision.hpp"
 #include "NBody/GpuTimer.hpp"
 #include "NBody/LeapfrogStepper.hpp"
@@ -109,7 +110,12 @@ public:
             // slice [0, localN()); after the first updateGrav() inside
             // runSolver(), cstone reshards globally and [startIndex(),
             // endIndex()) becomes this rank's owned range.
-            pcontainer_m->create(static_cast<unsigned>(localN()));
+            const unsigned n0 = static_cast<unsigned>(localN());
+            pcontainer_m->create(n0);
+            id_.resize(n0);
+            px_.resize(n0);
+            py_.resize(n0);
+            pz_.resize(n0);
             initializeParticles();
 
             SolverParams bhParams;
@@ -178,19 +184,19 @@ protected:
     void kickHalf() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("kickHalf");
         ScopedIpplTimer scope(t);
-        leapfrogKickHalf<P>(*pcontainer_m, dt_m);
+        leapfrogKickHalf<P>(*pcontainer_m, px_, py_, pz_, dt_m);
     }
 
     void kickFull() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("kickFull");
         ScopedIpplTimer scope(t);
-        leapfrogKick<P>(*pcontainer_m, dt_m);
+        leapfrogKick<P>(*pcontainer_m, px_, py_, pz_, dt_m);
     }
 
     void drift() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("drift");
         ScopedIpplTimer scope(t);
-        leapfrogDrift<P>(*pcontainer_m, dt_m);
+        leapfrogDrift<P>(*pcontainer_m, px_, py_, pz_, dt_m);
     }
 
     void wrap() {
@@ -241,8 +247,15 @@ protected:
     }
 
 protected:
+    using IdType = typename Container::IdType;
+
     std::unique_ptr<Container> pcontainer_m;
     std::unique_ptr<Solver>    solver_m;
+
+    // Driver-owned conserved fields. Sized in lockstep with pc.create() and
+    // permuted/redistributed by cstone when passed to pc.updateGrav(...).
+    FieldVector<IdType> id_;
+    FieldVector<Tc>     px_, py_, pz_;
 
     unsigned long N_m;
     int           Nt_m;

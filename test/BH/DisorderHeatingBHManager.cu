@@ -1,107 +1,18 @@
 #include "DisorderHeatingBHManager.hpp"
 
-#include <cuda_runtime.h>
-#include <curand_kernel.h>
 #include <mpi.h>
 
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
 
+#include "cstone/primitives/mpi_wrappers.hpp"
+
 namespace ippl::nbody {
 
 namespace {
 
-template <class T> struct MpiTypeOf;
-template <> struct MpiTypeOf<float>  { static MPI_Datatype value() { return MPI_FLOAT;  } };
-template <> struct MpiTypeOf<double> { static MPI_Datatype value() { return MPI_DOUBLE; } };
-
 constexpr unsigned kBlockSize = 256;
-
-template <class Tc, class Th, class Tm>
-__global__ void sampleKernel(unsigned start, unsigned n,
-                             unsigned long firstGlobal,
-                             Tc beamRad,
-                             Th smoothingH,
-                             Tc* __restrict__ Rx, Tc* __restrict__ Ry, Tc* __restrict__ Rz,
-                             Tc* __restrict__ Px, Tc* __restrict__ Py, Tc* __restrict__ Pz,
-                             Tm* __restrict__ charge,
-                             Th* __restrict__ h,
-                             unsigned long seed) {
-    unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= n) { return; }
-    unsigned i = start + tid;
-
-    // Subsequence keyed on the global particle index — bit-reproducible across
-    // rank counts. Philox: 2^64-wide subsequence space, safe for any N.
-    curandStatePhilox4_32_10_t state;
-    curand_init(seed,
-                /*subsequence=*/static_cast<unsigned long long>(firstGlobal) +
-                                static_cast<unsigned long long>(tid),
-                /*offset=*/0ULL, &state);
-
-    // P3MHeating samples u first then three normals; keep the same draw order
-    // so seed reuse picks structurally similar IC even across RNG families.
-    Tc u  = static_cast<Tc>(curand_uniform_double(&state));
-    Tc nx = static_cast<Tc>(curand_normal_double(&state));
-    Tc ny = static_cast<Tc>(curand_normal_double(&state));
-    Tc nz = static_cast<Tc>(curand_normal_double(&state));
-
-    Tc normsq = nx * nx + ny * ny + nz * nz;
-    // curand_uniform_double returns (0, 1] so u^(1/3) is well-defined;
-    // normsq > 0 with probability 1, but guard against the measure-zero zero.
-    Tc invNorm = (normsq > Tc(0)) ? (Tc(1) / ::sqrt(normsq)) : Tc(0);
-    Tc r       = beamRad * ::pow(u, Tc(1) / Tc(3));
-
-    Rx[i] = r * nx * invNorm;
-    Ry[i] = r * ny * invNorm;
-    Rz[i] = r * nz * invNorm;
-
-    Px[i] = Tc(0);
-    Py[i] = Tc(0);
-    Pz[i] = Tc(0);
-
-    charge[i] = Tm(1);
-    h[i]      = smoothingH;
-}
-
-}  // namespace
-
-template <class P>
-void sampleDihIC(SphexaParticleContainer<P, 3>& pc,
-                 unsigned localN,
-                 unsigned long firstGlobal,
-                 typename P::Tc beamRad,
-                 typename P::Th smoothingH,
-                 unsigned long seed) {
-    using Tc = typename P::Tc;
-    using Th = typename P::Th;
-    using Tm = typename P::Tm;
-
-    if (localN == 0) { return; }
-    const unsigned grid = (localN + kBlockSize - 1) / kBlockSize;
-    sampleKernel<Tc, Th, Tm><<<grid, kBlockSize>>>(
-        /*start=*/0, localN, firstGlobal,
-        beamRad, smoothingH,
-        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
-        getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc),
-        getRaw<"charge">(pc),
-        getRaw<"h">(pc),
-        seed);
-    cudaDeviceSynchronize();
-}
-
-template void sampleDihIC<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&,
-                                           unsigned, unsigned long,
-                                           double, double, unsigned long);
-template void sampleDihIC<MixedPrecision>(SphexaParticleContainer<MixedPrecision, 3>&,
-                                          unsigned, unsigned long,
-                                          double, float,  unsigned long);
-template void sampleDihIC<FloatPrecision>(SphexaParticleContainer<FloatPrecision, 3>&,
-                                          unsigned, unsigned long,
-                                          float,  float,  unsigned long);
-
-namespace {
 
 template <class T>
 struct BeamStatsRaw {
@@ -170,7 +81,10 @@ struct TuplePlus3 {
 }  // namespace
 
 template <class P>
-BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc) {
+BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc,
+                                            const FieldVector<typename P::Tc>& Px,
+                                            const FieldVector<typename P::Tc>& Py,
+                                            const FieldVector<typename P::Tc>& Pz) {
     using Tc = typename P::Tc;
 
     const unsigned start = pc.startIndex();
@@ -179,7 +93,7 @@ BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc) {
     if (end > start) {
         BeamStatsFunctor<Tc> functor{
             getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
-            getRaw<"Px">(pc), getRaw<"Py">(pc), getRaw<"Pz">(pc)};
+            Px.data(), Py.data(), Pz.data()};
         auto first = thrust::counting_iterator<unsigned>(start);
         auto last  = thrust::counting_iterator<unsigned>(end);
         BeamStatsRaw<Tc> sum = thrust::transform_reduce(
@@ -187,7 +101,7 @@ BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc) {
         for (int i = 0; i < 12; ++i) { local[i] = sum.vals[i]; }
     }
     BeamStats12<Tc> out{};
-    MPI_Allreduce(local, out.vals, 12, MpiTypeOf<Tc>::value(), MPI_SUM, MPI_COMM_WORLD);
+    ::mpiAllreduce(local, out.vals, 12, MPI_SUM, MPI_COMM_WORLD);
     return out;
 }
 
@@ -213,16 +127,69 @@ Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc) {
         local[3] = static_cast<Tc>(end - start);
     }
     Tc global[4] = {Tc(0), Tc(0), Tc(0), Tc(0)};
-    MPI_Allreduce(local, global, 4, MpiTypeOf<Tc>::value(), MPI_SUM, MPI_COMM_WORLD);
+    ::mpiAllreduce(local, global, 4, MPI_SUM, MPI_COMM_WORLD);
     const Tc invN = (global[3] > Tc(0)) ? Tc(1) / global[3] : Tc(0);
     return Triple<Tc>{global[0] * invN, global[1] * invN, global[2] * invN};
 }
 
-template BeamStats12<double> reduceBeamStats<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&);
-template BeamStats12<double> reduceBeamStats<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&);
-template BeamStats12<float>  reduceBeamStats<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&);
-template Triple<double> reduceMeanAbsAccel<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&);
-template Triple<double> reduceMeanAbsAccel<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&);
-template Triple<float>  reduceMeanAbsAccel<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&);
+#define INSTANTIATE_DIH_REDUCE(POLICY, T)                                  \
+    template BeamStats12<T> reduceBeamStats<POLICY>(                       \
+        SphexaParticleContainer<POLICY, 3>&,                               \
+        const FieldVector<POLICY::Tc>&,                                    \
+        const FieldVector<POLICY::Tc>&,                                    \
+        const FieldVector<POLICY::Tc>&);                                   \
+    template Triple<T> reduceMeanAbsAccel<POLICY>(SphexaParticleContainer<POLICY, 3>&);
+
+INSTANTIATE_DIH_REDUCE(DoublePrecision, double)
+INSTANTIATE_DIH_REDUCE(MixedPrecision,  double)
+INSTANTIATE_DIH_REDUCE(FloatPrecision,  float)
+
+#undef INSTANTIATE_DIH_REDUCE
+
+namespace dih_detail {
+
+namespace {
+
+template <class Tc, class Ta>
+__global__ void focusingKernel(unsigned start, unsigned n,
+                               Tc scale,
+                               const Tc* __restrict__ Rx,
+                               const Tc* __restrict__ Ry,
+                               const Tc* __restrict__ Rz,
+                               Ta* __restrict__ Ex,
+                               Ta* __restrict__ Ey,
+                               Ta* __restrict__ Ez) {
+    unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n) { return; }
+    unsigned i = start + tid;
+    Ex[i] += static_cast<Ta>(scale * Rx[i]);
+    Ey[i] += static_cast<Ta>(scale * Ry[i]);
+    Ez[i] += static_cast<Ta>(scale * Rz[i]);
+}
+
+}  // namespace
+
+template <class P>
+void applyFocusing(SphexaParticleContainer<P, 3>& pc,
+                   typename P::Tc strength,
+                   typename P::Tc beamRad) {
+    using Tc = typename P::Tc;
+    using Ta = typename P::Ta;
+    const unsigned start = pc.startIndex();
+    const unsigned n     = pc.endIndex() - start;
+    if (n == 0) { return; }
+    const Tc       scale = strength / beamRad;
+    const unsigned grid  = (n + kBlockSize - 1) / kBlockSize;
+    focusingKernel<Tc, Ta><<<grid, kBlockSize>>>(
+        start, n, scale,
+        getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
+        getRaw<"Ex">(pc), getRaw<"Ey">(pc), getRaw<"Ez">(pc));
+}
+
+template void applyFocusing<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&, double, double);
+template void applyFocusing<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&, double, double);
+template void applyFocusing<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&, float,  float);
+
+}  // namespace dih_detail
 
 }  // namespace ippl::nbody

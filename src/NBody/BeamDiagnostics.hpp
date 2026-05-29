@@ -1,6 +1,7 @@
 #ifndef IPPL_NBODY_BEAM_DIAGNOSTICS_HPP
 #define IPPL_NBODY_BEAM_DIAGNOSTICS_HPP
 
+#include "NBody/Accelerator.hpp"
 #include "NBody/SphexaParticleContainer.hpp"
 
 namespace ippl::nbody {
@@ -15,15 +16,20 @@ struct Triple {
     T z;
 };
 
-// Mean velocity over [startIndex(), endIndex()). Velocity is at the container's
-// coordinate type P::Tc.
+// Mean velocity over [startIndex(), endIndex()). GPU body: thrust
+// (BeamDiagnostics.cu); CPU body: OpenMP (BeamDiagnostics.cpp).
 template <class P>
-Triple<typename P::Tc> reduceMeanVelocity(SphexaParticleContainer<P, 3>& pc);
+Triple<typename P::Tc> reduceMeanVelocity(SphexaParticleContainer<P, 3>& pc,
+                                          const FieldVector<typename P::Tc>& Px,
+                                          const FieldVector<typename P::Tc>& Py,
+                                          const FieldVector<typename P::Tc>& Pz);
 
-// Per-axis variance of velocity around (avgVx, avgVy, avgVz). Caller computes
-// avgV via reduceMeanVelocity first.
+// Per-axis variance of velocity around (avgVx, avgVy, avgVz).
 template <class P>
 Triple<typename P::Tc> reduceTemperature(SphexaParticleContainer<P, 3>& pc,
+                                         const FieldVector<typename P::Tc>& Px,
+                                         const FieldVector<typename P::Tc>& Py,
+                                         const FieldVector<typename P::Tc>& Pz,
                                          Triple<typename P::Tc> avgV);
 
 }  // namespace ippl::nbody

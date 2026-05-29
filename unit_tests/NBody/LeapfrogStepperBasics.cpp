@@ -6,18 +6,21 @@
 #include <cstdlib>
 #include <vector>
 
-#include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
 #include "Ippl.h"
 
 #include "NBody/SphexaParticleContainer.hpp"
 #include "NBody/LeapfrogStepper.hpp"
+#include "NBodyTestUtil.hpp"
 
 using ippl::nbody::DoublePrecision;
+using ippl::nbody::FieldVector;
 using ippl::nbody::leapfrogDrift;
 using ippl::nbody::leapfrogKickHalf;
 using ippl::nbody::SphexaParticleContainer;
+using ippl::nbody::test::downloadDevice;
+using ippl::nbody::test::uploadHost;
 
 namespace {
 
@@ -25,21 +28,6 @@ constexpr unsigned kN             = 256;
 constexpr unsigned kBucketSize    = 64;
 constexpr unsigned kBucketSizeFoc = 64;
 constexpr float    kTheta         = 0.5f;
-
-template <class T>
-void downloadDevice(const T* dPtr, std::size_t n, std::vector<T>& host) {
-    host.resize(n);
-    if (n == 0) { return; }
-    cudaError_t err = cudaMemcpy(host.data(), dPtr, n * sizeof(T), cudaMemcpyDeviceToHost);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy D2H failed: " << cudaGetErrorString(err);
-}
-
-template <class T>
-void uploadHost(const std::vector<T>& host, T* dPtr) {
-    if (host.empty()) { return; }
-    cudaError_t err = cudaMemcpy(dPtr, host.data(), host.size() * sizeof(T), cudaMemcpyHostToDevice);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy H2D failed: " << cudaGetErrorString(err);
-}
 
 } // namespace
 
@@ -55,7 +43,7 @@ TEST(LeapfrogStepper, DriftAdvancesPositionLinearly) {
         std::array<BoundaryType, 3>{
             BoundaryType::open, BoundaryType::open, BoundaryType::open});
 
-    pc.create(kN);
+    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN); FieldVector<T> dPx, dPy, dPz; dPx.resize(kN); dPy.resize(kN); dPz.resize(kN);
 
     std::vector<T> xPre(kN), yPre(kN), zPre(kN), hPre(kN, 1.0e-2);
     std::vector<T> pxPre(kN), pyPre(kN), pzPre(kN);
@@ -75,15 +63,15 @@ TEST(LeapfrogStepper, DriftAdvancesPositionLinearly) {
     uploadHost(yPre,  getRaw<"Ry">(pc));
     uploadHost(zPre,  getRaw<"Rz">(pc));
     uploadHost(hPre,  getRaw<"h">(pc));
-    uploadHost(pxPre, getRaw<"Px">(pc));
-    uploadHost(pyPre, getRaw<"Py">(pc));
-    uploadHost(pzPre, getRaw<"Pz">(pc));
-    uploadHost(idPre, getRaw<"ID">(pc));
+    uploadHost(pxPre, dPx.data());
+    uploadHost(pyPre, dPy.data());
+    uploadHost(pzPre, dPz.data());
+    uploadHost(idPre, deviceID.data());
 
     // update() to populate startIndex()/endIndex(); the SFC sort permutes the
     // input arrays, so we re-snapshot R and P after sync to compute the host
     // reference for the *post-sync* state.
-    pc.update();
+    pc.update(deviceID, dPx, dPy, dPz);
 
     const unsigned start      = pc.startIndex();
     const unsigned end        = pc.endIndex();
@@ -94,12 +82,12 @@ TEST(LeapfrogStepper, DriftAdvancesPositionLinearly) {
     downloadDevice(getRaw<"Rx">(pc), nWithHalos, xMid);
     downloadDevice(getRaw<"Ry">(pc), nWithHalos, yMid);
     downloadDevice(getRaw<"Rz">(pc), nWithHalos, zMid);
-    downloadDevice(getRaw<"Px">(pc), kN, pxMid);
-    downloadDevice(getRaw<"Py">(pc), kN, pyMid);
-    downloadDevice(getRaw<"Pz">(pc), kN, pzMid);
+    downloadDevice(dPx.data(), kN, pxMid);
+    downloadDevice(dPy.data(), kN, pyMid);
+    downloadDevice(dPz.data(), kN, pzMid);
 
     const T dt = 1.25e-3;
-    leapfrogDrift<P>(pc, dt);
+    leapfrogDrift<P>(pc, dPx, dPy, dPz, dt);
 
     std::vector<T> xPost, yPost, zPost;
     downloadDevice(getRaw<"Rx">(pc), nWithHalos, xPost);
@@ -125,7 +113,7 @@ TEST(LeapfrogStepper, KickHalfReducesVelocityByHalfDtE) {
         std::array<BoundaryType, 3>{
             BoundaryType::open, BoundaryType::open, BoundaryType::open});
 
-    pc.create(kN);
+    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN); FieldVector<T> dPx, dPy, dPz; dPx.resize(kN); dPy.resize(kN); dPz.resize(kN);
 
     std::vector<T> xPre(kN), yPre(kN), zPre(kN), hPre(kN, 1.0e-2);
     std::vector<T> pxPre(kN), pyPre(kN), pzPre(kN);
@@ -149,15 +137,15 @@ TEST(LeapfrogStepper, KickHalfReducesVelocityByHalfDtE) {
     uploadHost(yPre,  getRaw<"Ry">(pc));
     uploadHost(zPre,  getRaw<"Rz">(pc));
     uploadHost(hPre,  getRaw<"h">(pc));
-    uploadHost(pxPre, getRaw<"Px">(pc));
-    uploadHost(pyPre, getRaw<"Py">(pc));
-    uploadHost(pzPre, getRaw<"Pz">(pc));
+    uploadHost(pxPre, dPx.data());
+    uploadHost(pyPre, dPy.data());
+    uploadHost(pzPre, dPz.data());
     uploadHost(exPre, getRaw<"Ex">(pc));
     uploadHost(eyPre, getRaw<"Ey">(pc));
     uploadHost(ezPre, getRaw<"Ez">(pc));
-    uploadHost(idPre, getRaw<"ID">(pc));
+    uploadHost(idPre, deviceID.data());
 
-    pc.update();
+    pc.update(deviceID, dPx, dPy, dPz);
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
@@ -167,20 +155,20 @@ TEST(LeapfrogStepper, KickHalfReducesVelocityByHalfDtE) {
     // tuple) are unchanged byte-for-byte at indices [0, kN). Snapshot them as
     // the host reference, then run kickHalf and verify P_post == P_mid - 0.5*dt*E.
     std::vector<T> pxMid, pyMid, pzMid, exMid, eyMid, ezMid;
-    downloadDevice(getRaw<"Px">(pc), kN, pxMid);
-    downloadDevice(getRaw<"Py">(pc), kN, pyMid);
-    downloadDevice(getRaw<"Pz">(pc), kN, pzMid);
+    downloadDevice(dPx.data(), kN, pxMid);
+    downloadDevice(dPy.data(), kN, pyMid);
+    downloadDevice(dPz.data(), kN, pzMid);
     downloadDevice(getRaw<"Ex">(pc), kN, exMid);
     downloadDevice(getRaw<"Ey">(pc), kN, eyMid);
     downloadDevice(getRaw<"Ez">(pc), kN, ezMid);
 
     const T dt = 2.5e-3;
-    leapfrogKickHalf<P>(pc, dt);
+    leapfrogKickHalf<P>(pc, dPx, dPy, dPz, dt);
 
     std::vector<T> pxPost, pyPost, pzPost;
-    downloadDevice(getRaw<"Px">(pc), kN, pxPost);
-    downloadDevice(getRaw<"Py">(pc), kN, pyPost);
-    downloadDevice(getRaw<"Pz">(pc), kN, pzPost);
+    downloadDevice(dPx.data(), kN, pxPost);
+    downloadDevice(dPy.data(), kN, pyPost);
+    downloadDevice(dPz.data(), kN, pzPost);
 
     const T halfDt = T(0.5) * dt;
     for (unsigned j = start; j < end; ++j) {

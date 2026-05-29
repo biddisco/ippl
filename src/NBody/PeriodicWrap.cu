@@ -1,7 +1,5 @@
 #include "NBody/PeriodicWrap.hpp"
 
-#include <cuda_runtime.h>
-
 #include "cstone/sfc/box.hpp"
 
 namespace ippl::nbody {
@@ -10,28 +8,24 @@ namespace {
 
 constexpr unsigned kBlockSize = 256;
 
-template <class T>
-__device__ inline T wrapAxis(T r, T lo, T L, bool periodic) {
-    if (!periodic) { return r; }
-    T s = (r - lo) / L;
-    s = s - floor(s);            // fractional part in [0, 1)
-    return lo + s * L;
-}
-
+// Wrap each owned particle back into the box via cstone::putInBox — the same
+// single-box-length wrap sphexa applies after the drift (positions.hpp). A
+// particle never moves more than one box-length per step, so a single wrap
+// suffices; open-BC axes are left untouched by putInBox.
 template <class T>
 __global__ void wrapKernel(unsigned start, unsigned n,
                            T* __restrict__ Rx,
                            T* __restrict__ Ry,
                            T* __restrict__ Rz,
-                           T xmin, T ymin, T zmin,
-                           T lx,   T ly,   T lz,
-                           bool px, bool py, bool pz) {
+                           cstone::Box<T> box) {
     unsigned tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= n) { return; }
     unsigned i = start + tid;
-    Rx[i] = wrapAxis(Rx[i], xmin, lx, px);
-    Ry[i] = wrapAxis(Ry[i], ymin, ly, py);
-    Rz[i] = wrapAxis(Rz[i], zmin, lz, pz);
+    cstone::Vec3<T> X{Rx[i], Ry[i], Rz[i]};
+    X = cstone::putInBox(X, box);
+    Rx[i] = X[0];
+    Ry[i] = X[1];
+    Rz[i] = X[2];
 }
 
 } // namespace
@@ -45,18 +39,17 @@ void wrapToBox(SphexaParticleContainer<P, 3>& pc) {
     if (n == 0) { return; }
 
     const auto box = pc.box();
-    const bool px = box.boundaryX() == cstone::BoundaryType::periodic;
-    const bool py = box.boundaryY() == cstone::BoundaryType::periodic;
-    const bool pz = box.boundaryZ() == cstone::BoundaryType::periodic;
-    if (!px && !py && !pz) { return; }   // open-BC fast path
+    const bool anyPeriodic =
+        box.boundaryX() == cstone::BoundaryType::periodic ||
+        box.boundaryY() == cstone::BoundaryType::periodic ||
+        box.boundaryZ() == cstone::BoundaryType::periodic;
+    if (!anyPeriodic) { return; }   // open-BC fast path
 
     const unsigned grid = (n + kBlockSize - 1) / kBlockSize;
     wrapKernel<Tc><<<grid, kBlockSize>>>(
         start, n,
         getRaw<"Rx">(pc), getRaw<"Ry">(pc), getRaw<"Rz">(pc),
-        box.xmin(), box.ymin(), box.zmin(),
-        box.lx(),   box.ly(),   box.lz(),
-        px, py, pz);
+        box);
 }
 
 template void wrapToBox<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&);

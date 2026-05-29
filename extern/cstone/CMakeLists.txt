@@ -12,16 +12,36 @@
 # domain/CMakeLists.txt + per-directory CMakeLists.txt files.
 # -----------------------------------------------------------------------------
 
-# cstone host paths are decorated with OpenMP pragmas. When OpenMP is
-# unavailable we still want the pragmas to be honored as no-ops without
-# producing -Wunknown-pragmas warnings, so make OpenMP a hard requirement
-# (matching upstream domain/CMakeLists.txt).
-find_package(OpenMP REQUIRED COMPONENTS CXX)
+# Detect a HIP-only build. With Kokkos the CXX compiler IS the HIP compiler, so
+# every C++ TU (.cpp and .cu) is compiled as `-x hip`. clang's HIP + OpenMP
+# (-offload) path crashes (clang-18) parsing cstone's `#pragma omp` host loops,
+# so on HIP we must not pass -fopenmp to anything. The pragmas are then ignored
+# (the Kokkos host space is Serial on a HIP-only build anyway); we just silence
+# the unknown-pragma warnings. On CUDA/CPU we link OpenMP normally. This mirrors
+# sphexa, whose cstone_gpu target likewise does not link OpenMP.
+set(_CSTONE_HIP OFF)
+if(CMAKE_HIP_COMPILER AND NOT CMAKE_CUDA_COMPILER)
+  set(_CSTONE_HIP ON)
+endif()
+
+# cstone host paths are decorated with OpenMP pragmas. On CUDA/CPU make OpenMP a
+# hard requirement (matching upstream domain/CMakeLists.txt); on HIP it is not
+# linked (see above).
+if(NOT _CSTONE_HIP)
+  find_package(OpenMP REQUIRED COMPONENTS CXX)
+endif()
 
 # cstone's domain/halo headers include <mpi.h>; MPI is a hard dependency of
 # any consumer that includes those headers (i.e. anything beyond pure-CPU
 # header-only utilities). Propagate as PUBLIC/INTERFACE.
 find_package(MPI REQUIRED COMPONENTS CXX)
+
+# When ON, halo / focus-tree / domain exchanges pass device pointers straight to
+# MPI (no host staging). Requires a GPU-aware MPI runtime (e.g. Cray MPICH with
+# MPICH_GPU_SUPPORT_ENABLED=1). OFF stages through host memory via memcpy and
+# warns. Mirrors sphexa's domain/CMakeLists.txt.
+option(CSTONE_WITH_GPU_AWARE_MPI
+  "Use GPU-aware MPI for cstone halo/focus/domain exchange" OFF)
 
 # Header-only target: usable on CPU-only builds for compile-tests of the
 # header surface.
@@ -29,7 +49,12 @@ add_library(cstone_headers INTERFACE)
 target_include_directories(cstone_headers INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(cstone_headers INTERFACE cxx_std_20)
-target_link_libraries(cstone_headers INTERFACE OpenMP::OpenMP_CXX MPI::MPI_CXX)
+target_link_libraries(cstone_headers INTERFACE MPI::MPI_CXX)
+if(_CSTONE_HIP)
+  target_compile_options(cstone_headers INTERFACE -Wno-unknown-pragmas)
+else()
+  target_link_libraries(cstone_headers INTERFACE OpenMP::OpenMP_CXX)
+endif()
 add_library(ippl::cstone_headers ALIAS cstone_headers)
 
 # GPU library: only when CUDA (or HIP) is the active language.
@@ -54,7 +79,10 @@ if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
   target_include_directories(cstone_gpu PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
   target_compile_features(cstone_gpu PUBLIC cxx_std_20)
-  target_link_libraries(cstone_gpu PUBLIC OpenMP::OpenMP_CXX MPI::MPI_CXX)
+  target_link_libraries(cstone_gpu PUBLIC MPI::MPI_CXX)
+  if(NOT _CSTONE_HIP)
+    target_link_libraries(cstone_gpu PUBLIC OpenMP::OpenMP_CXX)
+  endif()
   # cstone host headers (assignment.hpp, halos.hpp) guard their GPU-impl
   # #include lines behind `#ifdef USE_CUDA`. Upstream sets this PRIVATE on
   # every CUDA-build target (e.g. main/src/sphexa/CMakeLists.txt:34); we
@@ -76,6 +104,25 @@ if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
   target_compile_options(cstone_gpu PUBLIC
     $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>
     $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+  # AMD/HIP backend (hipcc, no CUDA). cstone and ryoanji use thrust/cub, which
+  # under HIP map to rocThrust + hipCUB; thrust must be pointed at the HIP device
+  # system. Mirrors sphexa's domain/CMakeLists.txt. PUBLIC so ryoanji and
+  # ippl_nbody (which link cstone_gpu) inherit the libraries, the define, and the
+  # -fopenmp that hipcc needs for the omp pragmas in cstone host headers compiled
+  # in the .cu-as-HIP TUs.
+  if(CMAKE_HIP_COMPILER AND NOT CMAKE_CUDA_COMPILER)
+    find_package(hip REQUIRED)
+    find_package(rocthrust REQUIRED)
+    find_package(hipcub REQUIRED)
+    target_link_libraries(cstone_gpu PUBLIC hip::host roc::rocthrust hip::hipcub)
+    target_compile_definitions(cstone_gpu PUBLIC THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP)
+    # OpenMP is not linked on HIP (see top of file), so cstone's #pragma omp host
+    # loops are ignored. Silence the unknown-pragma warnings on every consumer TU.
+    # Not COMPILE_LANGUAGE-guarded: with Kokkos, consumer .cpp files are CXX to
+    # CMake but compiled `-x hip`, so a HIP-language guard would miss them.
+    target_compile_options(cstone_gpu PUBLIC -Wno-unknown-pragmas)
+  endif()
   # CUDA_SEPARABLE_COMPILATION (-rdc=true) is deliberately OFF: matches
   # sphexa's upstream cstone build and lets nvcc whole-program-inline the
   # warp-cooperative primitives (shflSync, warpMin/Max, etc.) that

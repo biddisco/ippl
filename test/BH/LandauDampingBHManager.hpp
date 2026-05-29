@@ -3,12 +3,15 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <string>
 
 #include "NBody/NBodyManager.hpp"
+
+#include "BHRandom.hpp"
 
 namespace ippl::nbody {
 
@@ -23,18 +26,70 @@ template <class P>
 typename P::Tc reduceExGridEnergyCIC(SphexaParticleContainer<P, 3>& pc,
                                      typename P::Tc L, int G);
 
+namespace landau_detail {
+// Newton inverse of F(x) = x + (alpha/k)*sin(k*x) over one wavelength.
+template <class Tc>
+KOKKOS_INLINE_FUNCTION Tc inverseLandauCdf(Tc u, Tc alpha, Tc k) {
+    Tc x = u;
+    for (int it = 0; it < 6; ++it) {
+        Tc s = Kokkos::sin(k * x);
+        Tc c = Kokkos::cos(k * x);
+        x    = x - (x + (alpha / k) * s - u) / (Tc(1) + alpha * c);
+    }
+    return x;
+}
+}  // namespace landau_detail
+
+// Landau IC: device-parallel sampling via Kokkos::parallel_for with a
+// counter-based RNG keyed on the global particle index (reproducible across rank
+// counts). Writes straight into the field storage — no host buffers, no upload,
+// no curand. Runs on the GPU (CUDA/HIP) or host threads (OpenMP/Serial) per the
+// build's execution space.
 template <class P>
-void sampleLandauIC(SphexaParticleContainer<P, 3>& pc,
-                    unsigned localN,
-                    unsigned long firstGlobal,
-                    typename P::Tc alpha,
-                    typename P::Tc kx,
-                    typename P::Tc ky,
-                    typename P::Tc kz,
-                    typename P::Tc sigmaV,
-                    typename P::Tm qPerParticle,
-                    typename P::Th smoothingH,
-                    unsigned long seed);
+inline void sampleLandauIC(SphexaParticleContainer<P, 3>& pc,
+                           FieldVector<typename P::Tc>& Px,
+                           FieldVector<typename P::Tc>& Py,
+                           FieldVector<typename P::Tc>& Pz,
+                           unsigned localN,
+                           unsigned long firstGlobal,
+                           typename P::Tc alpha,
+                           typename P::Tc kx,
+                           typename P::Tc ky,
+                           typename P::Tc kz,
+                           typename P::Tc sigmaV,
+                           typename P::Tm qPerParticle,
+                           typename P::Th smoothingH,
+                           unsigned long seed) {
+    using Tc = typename P::Tc;
+    using Th = typename P::Th;
+    using Tm = typename P::Tm;
+    if (localN == 0) { return; }
+
+    const auto box = pc.box();
+    const Tc xmin = box.xmin(), ymin = box.ymin(), zmin = box.zmin();
+    const Tc Lx   = box.lx(),   Ly   = box.ly(),   Lz   = box.lz();
+
+    Tc* Rx = getRaw<"Rx">(pc); Tc* Ry = getRaw<"Ry">(pc); Tc* Rz = getRaw<"Rz">(pc);
+    Tc* px = Px.data();        Tc* py = Py.data();        Tc* pz = Pz.data();
+    Tm* q  = getRaw<"charge">(pc);
+    Th* h  = getRaw<"h">(pc);
+    const uint64_t base = static_cast<uint64_t>(seed) + static_cast<uint64_t>(firstGlobal);
+
+    Kokkos::parallel_for(
+        "sampleLandauIC", static_cast<long>(localN),
+        KOKKOS_LAMBDA(const long t) {
+            uint64_t s = base + static_cast<uint64_t>(t);
+            Rx[t] = xmin + landau_detail::inverseLandauCdf<Tc>(bhUniform<Tc>(s) * Lx, alpha, kx);
+            Ry[t] = ymin + landau_detail::inverseLandauCdf<Tc>(bhUniform<Tc>(s) * Ly, alpha, ky);
+            Rz[t] = zmin + landau_detail::inverseLandauCdf<Tc>(bhUniform<Tc>(s) * Lz, alpha, kz);
+            px[t] = sigmaV * bhNormal<Tc>(s);
+            py[t] = sigmaV * bhNormal<Tc>(s);
+            pz[t] = sigmaV * bhNormal<Tc>(s);
+            q[t]  = qPerParticle;
+            h[t]  = smoothingH;
+        });
+    Kokkos::fence();
+}
 
 
 // Landau-damping driver. Step ordering is KDK leapfrog
@@ -96,19 +151,17 @@ protected:
     void prepareSolverInputs(bool collect) override {
         using C = SphexaParticleContainer<P, 3>;
         constexpr auto idxCharge = C::template idxOf<"charge">;
-        constexpr auto idxID     = C::template idxOf<"ID">;
-        constexpr auto idxPx     = C::template idxOf<"Px">;
-        constexpr auto idxPy     = C::template idxOf<"Py">;
-        constexpr auto idxPz     = C::template idxOf<"Pz">;
+        auto& pc = this->pc();
         {
             static auto t = IpplTimings::getTimer("bh.syncGrav");
             ippl::nbody::GpuTimer scope(t, collect);
-            this->pc().template updateGrav<idxCharge, idxID, idxPx, idxPy, idxPz>();
+            pc.template updateGrav<idxCharge>(this->id_, this->px_, this->py_, this->pz_);
         }
         {
             static auto t = IpplTimings::getTimer("bh.haloCharge");
             ippl::nbody::GpuTimer scope(t, collect);
-            this->pc().template exchangeHalos<idxCharge>();
+            pc.exchangeHalos(std::tie(pc.template getDV<"charge">()),
+                             pc.haloSendBuf(), pc.haloRecvBuf());
         }
     }
 
@@ -129,6 +182,7 @@ protected:
 
     void initializeParticles() override {
         sampleLandauIC<P>(this->pc(),
+                          this->px_, this->py_, this->pz_,
                           static_cast<unsigned>(this->localN()),
                           this->firstGlobal(),
                           alpha_m, k_m, k_m, k_m,

@@ -2,12 +2,6 @@
 
 #include <mpi.h>
 
-#include <thrust/device_ptr.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/reduce.h>
-#include <thrust/transform_reduce.h>
-#include <thrust/tuple.h>
-
 #include "cstone/primitives/mpi_wrappers.hpp"
 
 namespace ippl::nbody {
@@ -22,30 +16,6 @@ Triple<T> finalizeMeanTriple(Triple<T> localSum, unsigned long localN) {
     return Triple<T>{inout[0] * invN, inout[1] * invN, inout[2] * invN};
 }
 
-template <class T>
-struct VelMinusMeanSqFunctor {
-    const T* __restrict__ Px;
-    const T* __restrict__ Py;
-    const T* __restrict__ Pz;
-    T meanVx, meanVy, meanVz;
-    __device__ thrust::tuple<T, T, T> operator()(unsigned i) const {
-        T dx = Px[i] - meanVx;
-        T dy = Py[i] - meanVy;
-        T dz = Pz[i] - meanVz;
-        return thrust::make_tuple(dx * dx, dy * dy, dz * dz);
-    }
-};
-
-template <class T>
-struct TuplePlus3 {
-    __host__ __device__ thrust::tuple<T, T, T>
-    operator()(const thrust::tuple<T, T, T>& a, const thrust::tuple<T, T, T>& b) const {
-        return thrust::make_tuple(thrust::get<0>(a) + thrust::get<0>(b),
-                                  thrust::get<1>(a) + thrust::get<1>(b),
-                                  thrust::get<2>(a) + thrust::get<2>(b));
-    }
-};
-
 }  // namespace
 
 template <class P>
@@ -54,19 +24,22 @@ Triple<typename P::Tc> reduceMeanVelocity(SphexaParticleContainer<P, 3>& pc,
                                           const FieldVector<typename P::Tc>& Py,
                                           const FieldVector<typename P::Tc>& Pz) {
     using Tc = typename P::Tc;
-    const unsigned start = pc.startIndex();
-    const unsigned end   = pc.endIndex();
+    const long start = static_cast<long>(pc.startIndex());
+    const long end   = static_cast<long>(pc.endIndex());
     Triple<Tc> localSum{Tc(0), Tc(0), Tc(0)};
     if (end > start) {
-        thrust::device_ptr<const Tc> dPx(Px.data());
-        thrust::device_ptr<const Tc> dPy(Py.data());
-        thrust::device_ptr<const Tc> dPz(Pz.data());
-        localSum.x = thrust::reduce(dPx + start, dPx + end, Tc(0), thrust::plus<Tc>());
-        localSum.y = thrust::reduce(dPy + start, dPy + end, Tc(0), thrust::plus<Tc>());
-        localSum.z = thrust::reduce(dPz + start, dPz + end, Tc(0), thrust::plus<Tc>());
+        const Tc* px = Px.data(); const Tc* py = Py.data(); const Tc* pz = Pz.data();
+        Tc sx = Tc(0), sy = Tc(0), sz = Tc(0);
+#pragma omp parallel for reduction(+ : sx, sy, sz) schedule(static)
+        for (long i = start; i < end; ++i) {
+            sx += px[i];
+            sy += py[i];
+            sz += pz[i];
+        }
+        localSum = {sx, sy, sz};
     }
     return finalizeMeanTriple<Tc>(localSum,
-                                  static_cast<unsigned long>(end > start ? end - start : 0u));
+                                  static_cast<unsigned long>(end > start ? end - start : 0));
 }
 
 template <class P>
@@ -76,25 +49,26 @@ Triple<typename P::Tc> reduceTemperature(SphexaParticleContainer<P, 3>& pc,
                                          const FieldVector<typename P::Tc>& Pz,
                                          Triple<typename P::Tc> avgV) {
     using Tc = typename P::Tc;
-    const unsigned start = pc.startIndex();
-    const unsigned end   = pc.endIndex();
+    const long start = static_cast<long>(pc.startIndex());
+    const long end   = static_cast<long>(pc.endIndex());
     Triple<Tc> localSum{Tc(0), Tc(0), Tc(0)};
     if (end > start) {
-        VelMinusMeanSqFunctor<Tc> functor{
-            Px.data(), Py.data(), Pz.data(),
-            avgV.x, avgV.y, avgV.z};
-        auto first = thrust::counting_iterator<unsigned>(start);
-        auto last  = thrust::counting_iterator<unsigned>(end);
-        auto sum = thrust::transform_reduce(
-            first, last, functor,
-            thrust::make_tuple(Tc(0), Tc(0), Tc(0)),
-            TuplePlus3<Tc>());
-        localSum.x = thrust::get<0>(sum);
-        localSum.y = thrust::get<1>(sum);
-        localSum.z = thrust::get<2>(sum);
+        const Tc* px = Px.data(); const Tc* py = Py.data(); const Tc* pz = Pz.data();
+        const Tc mvx = avgV.x, mvy = avgV.y, mvz = avgV.z;
+        Tc sx = Tc(0), sy = Tc(0), sz = Tc(0);
+#pragma omp parallel for reduction(+ : sx, sy, sz) schedule(static)
+        for (long i = start; i < end; ++i) {
+            const Tc dx = px[i] - mvx;
+            const Tc dy = py[i] - mvy;
+            const Tc dz = pz[i] - mvz;
+            sx += dx * dx;
+            sy += dy * dy;
+            sz += dz * dz;
+        }
+        localSum = {sx, sy, sz};
     }
     return finalizeMeanTriple<Tc>(localSum,
-                                  static_cast<unsigned long>(end > start ? end - start : 0u));
+                                  static_cast<unsigned long>(end > start ? end - start : 0));
 }
 
 #define INSTANTIATE_DIAG(POLICY, T)                                                  \

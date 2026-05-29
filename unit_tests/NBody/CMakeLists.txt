@@ -6,8 +6,9 @@
 # These tests verify that the vendored sources compile, link, and behave
 # the same way they do in the upstream tree.
 #
-# Only built when IPPL_ENABLE_NBODY=ON (which already requires CUDA in
-# IPPL_PLATFORMS — see top-level CMakeLists.txt).
+# Only built when IPPL_ENABLE_NBODY=ON. Backend follows IPPL_PLATFORMS: the
+# header tests and the backend-agnostic .cpp tests build everywhere; the .cu
+# tests are gated behind a device compiler (CUDA/HIP).
 #
 # Note: add_ippl_test() accepts a LINK_LIBS argument but currently only honors
 # it on the INTEGRATION branch. We attach the cstone/ryoanji targets via an
@@ -39,9 +40,33 @@ target_link_libraries(RyoanjiKernelCpu PRIVATE
   ippl::ryoanji_headers
   ippl::cstone_headers)
 
+# Backend-agnostic tests (.cpp): build on every backend. They exercise the
+# build's NBodyAcc (GpuTag on CUDA/HIP, CpuTag on CPU) through the same library
+# API, using the portable up/download helper in NBodyTestUtil.hpp. Each provides
+# its own main() (ippl::initialize wraps MPI + Kokkos; cstone's Domain calls MPI
+# collectives unconditionally), so no USE_GTEST_MAIN. RDC stays off: these TUs
+# include <Kokkos_Core.hpp> via SphexaParticleContainer.hpp, which trips desul's
+# atomics check under relocatable device code.
+foreach(_t SphexaContainerSync SphexaContainerFieldList SphexaContainerAttribute
+           LeapfrogStepperBasics PeriodicWrapKernel)
+  add_ippl_test(${_t}
+    SOURCES ${_t}.cpp
+    NO_MPI
+    LABELS nbody)
+  target_link_libraries(${_t} PRIVATE ippl::nbody)
+  set_target_properties(${_t} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endforeach()
+
+# GPU-only tests: their .cu sources (ryoanji::directSum) require a device
+# compiler. Gated so a CPU build still configures. BH-vs-direct correctness on
+# CPU is covered by RyoanjiKernelCpu + the Landau/DIH physics runs.
+if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
+
+if(CMAKE_HIP_COMPILER AND NOT CMAKE_CUDA_COMPILER)
+  set_source_files_properties(RyoanjiDirect.cu SphexaBHSolverDirect.cu PROPERTIES LANGUAGE HIP)
+endif()
+
 # GPU ryoanji test: exercises the direct N² kernel from ryoanji_kernels.
-# The .cu source is detected as CUDA automatically because
-# enable_language(CUDA) was called at the top level when IPPL_ENABLE_NBODY=ON.
 add_ippl_test(RyoanjiDirect
   SOURCES RyoanjiDirect.cu
   NO_MPI
@@ -54,29 +79,8 @@ set_target_properties(RyoanjiDirect PROPERTIES
   CUDA_SEPARABLE_COMPILATION ON
   POSITION_INDEPENDENT_CODE ON)
 
-# SphexaParticleContainer sanity test: construct, create, sync, verify
-# ID-position lockstep round-trip on a single rank.
-# Notes:
-#   - CUDA_SEPARABLE_COMPILATION is NOT enabled on this test (same reason
-#     as ippl_nbody — including <Kokkos_Core.hpp> via SphexaParticleContainer.hpp
-#     under RDC mode trips desul's atomics check).
-#   - The test provides its own main() that calls ippl::initialize / ippl::finalize
-#     because cstone's Domain calls MPI collectives unconditionally — the stock
-#     gtest main does not initialize MPI. Hence: no USE_GTEST_MAIN.
-add_ippl_test(SphexaContainerSync
-  SOURCES SphexaContainerSync.cu
-  NO_MPI
-  LABELS nbody gpu)
-target_link_libraries(SphexaContainerSync PRIVATE
-  ippl::nbody)
-set_target_properties(SphexaContainerSync PROPERTIES
-  POSITION_INDEPENDENT_CODE ON)
-
-# BH solver sanity test: BH ≈ direct N² on a small open-BC system.
-# Same RDC / main / linkage caveats as SphexaContainerSync above.
-# ippl::ryoanji is needed for the GPU directSum() reference — the explicit
-# float/double instantiations live in multipole_holder.cu, part of the ryoanji
-# glue lib (see RyoanjiDirect for the precedent linkage).
+# BH solver sanity test: BH ≈ direct N² on a small open-BC system. ippl::ryoanji
+# provides the GPU directSum() reference (instantiations in multipole_holder.cu).
 add_ippl_test(SphexaBHSolverDirect
   SOURCES SphexaBHSolverDirect.cu
   NO_MPI
@@ -87,41 +91,4 @@ target_link_libraries(SphexaBHSolverDirect PRIVATE
 set_target_properties(SphexaBHSolverDirect PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
-# Leapfrog kernel sanity test: drift + half-kick correctness in isolation
-# (no BH solver). Same RDC / main / linkage pattern as SphexaContainerSync.
-add_ippl_test(LeapfrogStepperBasics
-  SOURCES LeapfrogStepperBasics.cu
-  NO_MPI
-  LABELS nbody gpu)
-target_link_libraries(LeapfrogStepperBasics PRIVATE
-  ippl::nbody)
-set_target_properties(LeapfrogStepperBasics PROPERTIES
-  POSITION_INDEPENDENT_CODE ON)
-
-add_ippl_test(SphexaContainerAttribute
-  SOURCES SphexaContainerAttribute.cu
-  NO_MPI
-  LABELS nbody gpu)
-target_link_libraries(SphexaContainerAttribute PRIVATE
-  ippl::nbody)
-set_target_properties(SphexaContainerAttribute PROPERTIES
-  POSITION_INDEPENDENT_CODE ON)
-
-add_ippl_test(SphexaContainerFieldList
-  SOURCES SphexaContainerFieldList.cu
-  NO_MPI
-  LABELS nbody gpu)
-target_link_libraries(SphexaContainerFieldList PRIVATE
-  ippl::nbody)
-set_target_properties(SphexaContainerFieldList PROPERTIES
-  POSITION_INDEPENDENT_CODE ON)
-
-# Periodic-wrap kernel test: covers all-periodic, all-open, and mixed BCs.
-add_ippl_test(PeriodicWrapKernel
-  SOURCES PeriodicWrapKernel.cu
-  NO_MPI
-  LABELS nbody gpu)
-target_link_libraries(PeriodicWrapKernel PRIVATE
-  ippl::nbody)
-set_target_properties(PeriodicWrapKernel PROPERTIES
-  POSITION_INDEPENDENT_CODE ON)
+endif()  # CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER

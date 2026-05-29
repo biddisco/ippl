@@ -7,17 +7,20 @@
 #include <cstdlib>
 #include <vector>
 
-#include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
 #include "Ippl.h"
 
 #include "NBody/SphexaParticleContainer.hpp"
 #include "NBody/PeriodicWrap.hpp"
+#include "NBodyTestUtil.hpp"
 
 using ippl::nbody::DoublePrecision;
+using ippl::nbody::FieldVector;
 using ippl::nbody::SphexaParticleContainer;
 using ippl::nbody::wrapToBox;
+using ippl::nbody::test::downloadDevice;
+using ippl::nbody::test::uploadHost;
 
 namespace {
 
@@ -26,24 +29,11 @@ constexpr unsigned kBucketSize    = 64;
 constexpr unsigned kBucketSizeFoc = 64;
 constexpr float    kTheta         = 0.5f;
 
-template <class T>
-void downloadDevice(const T* dPtr, std::size_t n, std::vector<T>& host) {
-    host.resize(n);
-    if (n == 0) { return; }
-    cudaError_t err = cudaMemcpy(host.data(), dPtr, n * sizeof(T), cudaMemcpyDeviceToHost);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy D2H failed: " << cudaGetErrorString(err);
-}
-
-template <class T>
-void uploadHost(const std::vector<T>& host, T* dPtr) {
-    if (host.empty()) { return; }
-    cudaError_t err = cudaMemcpy(dPtr, host.data(), host.size() * sizeof(T), cudaMemcpyHostToDevice);
-    ASSERT_EQ(err, cudaSuccess) << "cudaMemcpy H2D failed: " << cudaGetErrorString(err);
-}
-
-// Generate kN positions deliberately scattered across [-2.5, +2.5)^3 so wrapping
-// is non-trivial on every periodic axis. Returns by reference. h is uniform; ID
-// is i. Open / periodic boundary choice is the caller's job.
+// Generate kN positions scattered within one box-length outside the unit box,
+// i.e. [-0.9, 1.9)^3, so a single-box-length wrap (cstone::putInBox, matching the
+// post-drift wrap) brings every periodic axis back into [0, 1). A particle never
+// drifts more than one box-length per step, so this is the physical regime.
+// Returns by reference. h is uniform; ID is i. BC choice is the caller's job.
 template <class P>
 void seedScatteredPositions(unsigned long seed,
                             std::vector<typename P::Tc>& x,
@@ -58,18 +48,21 @@ void seedScatteredPositions(unsigned long seed,
     id.resize(kN);
     ::srand48(seed);
     for (unsigned i = 0; i < kN; ++i) {
-        x[i]  = Tc(-2.5 + 5.0 * drand48());
-        y[i]  = Tc(-2.5 + 5.0 * drand48());
-        z[i]  = Tc(-2.5 + 5.0 * drand48());
+        x[i]  = Tc(-0.9 + 2.8 * drand48());
+        y[i]  = Tc(-0.9 + 2.8 * drand48());
+        z[i]  = Tc(-0.9 + 2.8 * drand48());
         id[i] = i;
     }
 }
 
+// Single-box-length wrap, matching cstone::putInBox: shift by one L if outside
+// [lo, lo+L]. Valid because the scatter above stays within ±1 box-length.
 template <class T>
 T expectedWrap(T r, T lo, T L) {
-    T s = (r - lo) / L;
-    s = s - std::floor(s);
-    return lo + s * L;
+    const T hi = lo + L;
+    if (r > hi) { return r - L; }
+    if (r < lo) { return r + L; }
+    return r;
 }
 
 } // namespace
@@ -86,7 +79,7 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
         std::array<BoundaryType, 3>{
             BoundaryType::periodic, BoundaryType::periodic, BoundaryType::periodic});
 
-    pc.create(kN);
+    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN);
 
     std::vector<T> xPre, yPre, zPre, hPre;
     std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
@@ -96,9 +89,9 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
     uploadHost(yPre,  getRaw<"Ry">(pc));
     uploadHost(zPre,  getRaw<"Rz">(pc));
     uploadHost(hPre,  getRaw<"h">(pc));
-    uploadHost(idPre, getRaw<"ID">(pc));
+    uploadHost(idPre, deviceID.data());
 
-    // pc.update() with out-of-box positions would fault inside cstone's SFC key
+    // pc.update(deviceID) with out-of-box positions would fault inside cstone's SFC key
     // computation. Sync once with in-box positions to populate startIndex/endIndex,
     // then overwrite with the scattered set and run wrap. This mirrors the real-world
     // flow: drift produces possibly-out-of-box R, wrapToBox brings it back, then
@@ -114,7 +107,7 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
         uploadHost(xClamp, getRaw<"Rx">(pc));
         uploadHost(yClamp, getRaw<"Ry">(pc));
         uploadHost(zClamp, getRaw<"Rz">(pc));
-        pc.update();
+        pc.update(deviceID);
     }
 
     uploadHost(xPre, getRaw<"Rx">(pc));
@@ -122,7 +115,6 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
     uploadHost(zPre, getRaw<"Rz">(pc));
 
     wrapToBox<P>(pc);
-    cudaDeviceSynchronize();
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
@@ -152,7 +144,7 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
         std::array<BoundaryType, 3>{
             BoundaryType::open, BoundaryType::open, BoundaryType::open});
 
-    pc.create(kN);
+    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN);
 
     // Sync with in-box positions so the container has valid start/end indices.
     {
@@ -167,8 +159,8 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
         uploadHost(y,  getRaw<"Ry">(pc));
         uploadHost(z,  getRaw<"Rz">(pc));
         uploadHost(h,  getRaw<"h">(pc));
-        uploadHost(id, getRaw<"ID">(pc));
-        pc.update();
+        uploadHost(id, deviceID.data());
+        pc.update(deviceID);
     }
 
     // Now overwrite with deliberately-out-of-box positions.
@@ -180,7 +172,6 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
     uploadHost(zPre, getRaw<"Rz">(pc));
 
     wrapToBox<P>(pc);
-    cudaDeviceSynchronize();
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
@@ -212,7 +203,7 @@ TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
         std::array<BoundaryType, 3>{
             BoundaryType::periodic, BoundaryType::open, BoundaryType::open});
 
-    pc.create(kN);
+    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN);
 
     {
         std::vector<T> x(kN), y(kN), z(kN), h(kN, 1.0e-2);
@@ -226,8 +217,8 @@ TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
         uploadHost(y,  getRaw<"Ry">(pc));
         uploadHost(z,  getRaw<"Rz">(pc));
         uploadHost(h,  getRaw<"h">(pc));
-        uploadHost(id, getRaw<"ID">(pc));
-        pc.update();
+        uploadHost(id, deviceID.data());
+        pc.update(deviceID);
     }
 
     std::vector<T> xPre, yPre, zPre, hPre;
@@ -238,7 +229,6 @@ TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
     uploadHost(zPre, getRaw<"Rz">(pc));
 
     wrapToBox<P>(pc);
-    cudaDeviceSynchronize();
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();

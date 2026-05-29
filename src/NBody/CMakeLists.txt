@@ -11,17 +11,45 @@
 #
 # Simulation-specific code lives next to its driver in test/BH/.
 #
-# The module's source files (.cu) follow design plan §G: native CUDA + cstone,
-# no #include <Kokkos_Core.hpp> in the .cu/.cpp files. Kokkos appears only in
-# the public headers as the type of consumer-facing unmanaged-View accessors.
+# Portability (mirrors sphexa's per-backend source selection):
+#   - GPU build (CUDA or HIP): the device kernels live in .cu translation units,
+#     retargeted to HIP when hipcc is the device compiler, linked against the
+#     cstone/ryoanji GPU libraries.
+#   - CPU build: the same modules are compiled from their .cpp counterparts
+#     (inline OpenMP paths), linked against the header-only cstone/ryoanji
+#     INTERFACE targets.
+# Compute TUs are Kokkos-free; Kokkos appears only in the public container
+# header as the type of the consumer-facing unmanaged-View accessor.
 # -----------------------------------------------------------------------------
 
-add_library(ippl_nbody STATIC
-  SphexaParticleContainer.cu
-  SphexaBHSolver.cu
-  LeapfrogStepper.cu
-  PeriodicWrap.cu
-  BeamDiagnostics.cu)
+# Pure host orchestration (no device kernels): always compiled by the CXX
+# compiler. On GPU builds USE_CUDA is propagated PUBLIC from cstone_gpu, selecting
+# NBodyAcc=GpuTag and the GPU MultipoleHolder.
+set(_NBODY_COMMON_SOURCES
+  SphexaBHSolver.cpp)
+
+# Device-kernel modules: .cu on GPU builds (retargeted to HIP under hipcc),
+# inline-OpenMP .cpp on CPU builds.
+if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
+  set(_NBODY_KERNEL_SOURCES
+    SphexaParticleContainer.cu
+    LeapfrogStepper.cu
+    PeriodicWrap.cu
+    BeamDiagnostics.cu)
+  if(CMAKE_HIP_COMPILER AND NOT CMAKE_CUDA_COMPILER)
+    set_source_files_properties(${_NBODY_KERNEL_SOURCES} PROPERTIES LANGUAGE HIP)
+  endif()
+  set(_NBODY_BACKEND_LIBS ippl::cstone_gpu ippl::ryoanji)
+else()
+  set(_NBODY_KERNEL_SOURCES
+    SphexaParticleContainer.cpp
+    LeapfrogStepper.cpp
+    PeriodicWrap.cpp
+    BeamDiagnostics.cpp)
+  set(_NBODY_BACKEND_LIBS ippl::cstone_headers ippl::ryoanji_headers OpenMP::OpenMP_CXX)
+endif()
+
+add_library(ippl_nbody STATIC ${_NBODY_COMMON_SOURCES} ${_NBODY_KERNEL_SOURCES})
 
 target_include_directories(ippl_nbody PUBLIC
   $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
@@ -30,8 +58,7 @@ target_include_directories(ippl_nbody PUBLIC
 target_compile_features(ippl_nbody PUBLIC cxx_std_20)
 
 target_link_libraries(ippl_nbody
-  PUBLIC ippl::cstone_gpu
-         ippl::ryoanji
+  PUBLIC ${_NBODY_BACKEND_LIBS}
          Kokkos::kokkos)
 
 # Note: CUDA_SEPARABLE_COMPILATION is intentionally NOT enabled on ippl_nbody.
@@ -45,8 +72,10 @@ set_target_properties(ippl_nbody PROPERTIES
 
 add_library(ippl::nbody ALIAS ippl_nbody)
 
-install(FILES BHPrecision.hpp
+install(FILES Accelerator.hpp
+              BHPrecision.hpp
               SphexaParticleContainer.hpp
+              GravityWrapper.hpp
               SphexaBHSolver.hpp
               LeapfrogStepper.hpp
               PeriodicWrap.hpp

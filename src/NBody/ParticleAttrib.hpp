@@ -1,8 +1,7 @@
 #ifndef IPPL_NBODY_PARTICLE_ATTRIB_HPP
 #define IPPL_NBODY_PARTICLE_ATTRIB_HPP
 
-#include "cstone/cuda/device_vector.h"
-
+#include "NBody/Accelerator.hpp"
 #include "NBody/ParticleAttribBase.hpp"
 
 namespace ippl::nbody {
@@ -18,11 +17,11 @@ public:
     T*       data()       { return data_.data(); }
     const T* data() const { return data_.data(); }
 
-    cstone::DeviceVector<T>&       container()       { return data_; }
-    const cstone::DeviceVector<T>& container() const { return data_; }
+    FieldVector<T>&       container()       { return data_; }
+    const FieldVector<T>& container() const { return data_; }
 
 private:
-    cstone::DeviceVector<T> data_;
+    FieldVector<T> data_;
 };
 
 } // namespace ippl::nbody
