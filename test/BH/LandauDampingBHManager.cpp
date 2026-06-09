@@ -9,7 +9,7 @@ namespace ippl::nbody {
 // CPU counterpart of LandauDampingBHManager.cu: Σ Ex² via OpenMP, then global
 // MPI_SUM. (The IC sampler is host-side in the header, shared by both backends.)
 template <class P>
-typename P::Tc reduceExSumSq(SphexaParticleContainer<P, 3>& pc) {
+typename P::Tc reduceExSumSq(NBodyParticleContainer<P, 3>& pc) {
     using Tc = typename P::Tc;
     using Ta = typename P::Ta;
 
@@ -28,12 +28,12 @@ typename P::Tc reduceExSumSq(SphexaParticleContainer<P, 3>& pc) {
         local = s;
     }
     Tc out = Tc(0);
-    ::mpiAllreduce(&local, &out, 1, MPI_SUM, MPI_COMM_WORLD);
+    ::mpiAllreduce(&local, &out, 1, MPI_SUM, pc.comm());
     return out;
 }
 
-template double reduceExSumSq<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&);
-template double reduceExSumSq<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&);
-template float  reduceExSumSq<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&);
+template double reduceExSumSq<DoublePrecision>(NBodyParticleContainer<DoublePrecision, 3>&);
+template double reduceExSumSq<MixedPrecision> (NBodyParticleContainer<MixedPrecision,  3>&);
+template float  reduceExSumSq<FloatPrecision> (NBodyParticleContainer<FloatPrecision,  3>&);
 
 }  // namespace ippl::nbody

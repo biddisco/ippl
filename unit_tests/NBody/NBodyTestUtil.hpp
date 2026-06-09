@@ -12,7 +12,7 @@
 
 #include "cstone/cuda/cuda_utils.hpp"  // memcpyH2D / memcpyD2H (portable)
 
-#include "NBody/Accelerator.hpp"  // kHaveGpu
+#include "NBody/core/Accelerator.hpp"  // kHaveGpu
 
 namespace ippl::nbody::test {
 

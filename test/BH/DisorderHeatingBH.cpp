@@ -1,7 +1,7 @@
 // Disorder-Induced Heating — Barnes-Hut backend.
 //
 // Mirrors the sphexa DIH driver (fmm/test/disorder_heating.cu) but routes
-// the BH pipeline through ippl::nbody::SphexaBHSolver. Simulation logic
+// the BH pipeline through ippl::nbody::NBodySolver. Simulation logic
 // lives in DisorderHeatingBHManager (test/BH/DisorderHeatingBHManager.hpp).
 //
 // Two IC modes:

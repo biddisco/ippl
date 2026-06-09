@@ -1,4 +1,4 @@
-// Sanity test: SphexaBHSolver should match direct N² to within the
+// Sanity test: NBodySolver should match direct N² to within the
 // theta-determined error bound on a small, well-conditioned system.
 //
 // We run the BH pipeline first (which SFC-sorts particles via updateGrav), then
@@ -16,8 +16,8 @@
 
 #include "Ippl.h"
 
-#include "NBody/SphexaParticleContainer.hpp"
-#include "NBody/SphexaBHSolver.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
+#include "NBody/NBodySolver.hpp"
 #include "NBodyTestUtil.hpp"
 
 #include "cstone/sfc/box.hpp"
@@ -30,16 +30,16 @@
 #include "ryoanji/nbody/types.h"
 
 using ippl::nbody::DoublePrecision;
-using ippl::nbody::FieldVector;
-using ippl::nbody::SphexaBHSolver;
-using ippl::nbody::SphexaParticleContainer;
+using ippl::nbody::NBodySolver;
+using ippl::nbody::NBodyParticleContainer;
+using ippl::nbody::syncGravBH;
 using ippl::nbody::test::downloadDevice;
 using ippl::nbody::test::uploadHost;
+namespace fields = ippl::nbody::fields;
 
 namespace {
 
-using C = SphexaParticleContainer<DoublePrecision, 3>;
-constexpr auto kIdxCharge = C::idxOf<"charge">;
+using C = NBodyParticleContainer<DoublePrecision, 3>;
 
 constexpr unsigned kN             = 4096;
 constexpr unsigned kBucketSize    = 64;
@@ -48,12 +48,12 @@ constexpr float    kTheta         = 0.5f;
 
 } // namespace
 
-TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
+TEST(NBodySolver, MatchesDirectSumOpenBC) {
     using T = double;
     using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<P, 3> pc(
+    NBodyParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -62,22 +62,12 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
 
     pc.create(kN);
 
-    FieldVector<typename C::IdType> deviceID;
-    FieldVector<T>                  dPx, dPy, dPz;
-    deviceID.resize(kN);
-    dPx.resize(kN);
-    dPy.resize(kN);
-    dPz.resize(kN);
-
     std::vector<T> xPre(kN), yPre(kN), zPre(kN), hPre(kN, 1.0e-2), qPre(kN, 1.0);
-    std::vector<T> pxPre(kN, 0.0), pyPre(kN, 0.0), pzPre(kN, 0.0);
-    std::vector<typename C::IdType> idPre(kN);
     ::srand48(/*seed=*/424242);
     for (unsigned i = 0; i < kN; ++i) {
         xPre[i]  = drand48();
         yPre[i]  = drand48();
         zPre[i]  = drand48();
-        idPre[i] = i;
     }
 
     uploadHost(xPre,  getRaw<"Rx">(pc));
@@ -85,18 +75,15 @@ TEST(SphexaBHSolver, MatchesDirectSumOpenBC) {
     uploadHost(zPre,  getRaw<"Rz">(pc));
     uploadHost(hPre,  getRaw<"h">(pc));
     uploadHost(qPre,  getRaw<"charge">(pc));
-    uploadHost(idPre, deviceID.data());
-    uploadHost(pxPre, dPx.data());
-    uploadHost(pyPre, dPy.data());
-    uploadHost(pzPre, dPz.data());
 
-    typename SphexaBHSolver<P, 3>::Params params;
+    typename NBodySolver<P, 3>::Params params;
     params.G         = T(1);
     params.numShells = 0;
 
-    SphexaBHSolver<P, 3> solver(pc, params);
+    NBodySolver<P, 3> solver(pc, params);
     pc.setUniformH(0.01);
-    pc.updateGrav<kIdxCharge>(deviceID, dPx, dPy, dPz);
+    // BH consumes positions/charge/h; velocity/ID are conserved but unused here.
+    syncGravBH<P, fields::StdConserved, fields::StdDependent>(pc);
     solver.runSolver();
 
     const unsigned start      = pc.startIndex();

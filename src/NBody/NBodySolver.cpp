@@ -1,8 +1,23 @@
-#include "NBody/SphexaBHSolver.hpp"
+/*
+ * IPPL Barnes-Hut
+ *
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ *
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
 
-#include "NBody/Accelerator.hpp"
-#include "NBody/GpuTimer.hpp"
-#include "NBody/GravityWrapper.hpp"
+/*! @file
+ * @brief BH solver for coulomb interactions in NBody simulations
+ *
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#include "NBody/NBodySolver.hpp"
+
+#include "NBody/core/Accelerator.hpp"
+#include "NBody/helpers/GpuTimer.hpp"
+#include "NBody/wrappers/GravityWrapper.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -19,15 +34,12 @@
 
 namespace ippl::nbody {
 
-// Pure host orchestration — no device kernels live here. Compiled by the CXX
-// compiler on every backend; USE_CUDA (propagated PUBLIC from cstone_gpu) selects
-// NBodyAcc=GpuTag and the GPU MultipoleHolder, otherwise CpuTag and the CPU one.
 // Mirrors sphexa main/src/propagator/nbody.hpp::computeForces:
 //   zero accel -> computeSpatialGroups -> upsweep -> traverse (BH + Ewald).
 template <class P, unsigned Dim>
-class SphexaBHSolver<P, Dim>::Impl {
+class NBodySolver<P, Dim>::Impl {
 public:
-    using Container     = typename SphexaBHSolver<P, Dim>::Container;
+    using Container     = typename NBodySolver<P, Dim>::Container;
     using Tmm           = typename P::Tmm;
     using MultipoleType = ryoanji::CartesianQuadrupole<Tmm>;
     using DomainT       = typename Container::DomainT;
@@ -41,21 +53,21 @@ public:
 };
 
 template <class P, unsigned Dim>
-SphexaBHSolver<P, Dim>::SphexaBHSolver(Container& pc, Params params)
+NBodySolver<P, Dim>::NBodySolver(Container& pc, Params params)
     : impl_(std::make_unique<Impl>(pc, params)) {}
 
 template <class P, unsigned Dim>
-SphexaBHSolver<P, Dim>::~SphexaBHSolver() = default;
+NBodySolver<P, Dim>::~NBodySolver() = default;
 
 template <class P, unsigned Dim>
-SphexaBHSolver<P, Dim>::SphexaBHSolver(SphexaBHSolver&&) noexcept = default;
+NBodySolver<P, Dim>::NBodySolver(NBodySolver&&) noexcept = default;
 
 template <class P, unsigned Dim>
-SphexaBHSolver<P, Dim>&
-SphexaBHSolver<P, Dim>::operator=(SphexaBHSolver&&) noexcept = default;
+NBodySolver<P, Dim>&
+NBodySolver<P, Dim>::operator=(NBodySolver&&) noexcept = default;
 
 template <class P, unsigned Dim>
-void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
+void NBodySolver<P, Dim>::runSolver(bool warmup) {
     auto& s      = *impl_;
     auto& pc     = s.pc_;
     auto& params = s.params_;
@@ -100,7 +112,7 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
     auto stats = s.mHolder_.readStats();
     if (stats[1] == 0xFFFFFFFFull) {
         int mpiRank = -1;
-        MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
+        MPI_Comm_rank(pc.comm(), &mpiRank);
         throw std::runtime_error(
             "Barnes-Hut traversal stack exhausted on rank " + std::to_string(mpiRank) +
             ". Raise theta, reduce numShells, or shrink particle count per rank.");
@@ -118,10 +130,10 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
             static_cast<unsigned long long>(stats[4])};  // maxStack
         unsigned long long sum[2] = {0, 0};
         unsigned long long mx[3]  = {0, 0, 0};
-        MPI_Allreduce(&local[0], &sum[0], 2, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&local[2], &mx[0], 3, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&local[0], &sum[0], 2, MPI_UNSIGNED_LONG_LONG, MPI_SUM, pc.comm());
+        MPI_Allreduce(&local[2], &mx[0], 3, MPI_UNSIGNED_LONG_LONG, MPI_MAX, pc.comm());
         int mpiRank = -1;
-        MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
+        MPI_Comm_rank(pc.comm(), &mpiRank);
         if (mpiRank == 0) {
             std::printf("[bh.stats] sumP2P=%llu sumM2P=%llu maxP2P=%llu maxM2P=%llu maxStack=%llu\n",
                         sum[0], sum[1], mx[0], mx[1], mx[2]);
@@ -133,8 +145,8 @@ void SphexaBHSolver<P, Dim>::runSolver(bool warmup) {
 // Explicit instantiations — one per precision policy. Each maps to a
 // pre-compiled ryoanji TRAVERSE_MPOLE + COMPUTE_GRAVITY_EWALD_GPU row (GPU) or
 // the header-only ryoanji CPU path.
-template class SphexaBHSolver<DoublePrecision, 3>;
-template class SphexaBHSolver<MixedPrecision,  3>;
-template class SphexaBHSolver<FloatPrecision,  3>;
+template class NBodySolver<DoublePrecision, 3>;
+template class NBodySolver<MixedPrecision,  3>;
+template class NBodySolver<FloatPrecision,  3>;
 
 }  // namespace ippl::nbody

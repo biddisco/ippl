@@ -10,8 +10,12 @@
 #include <string>
 
 #include "NBody/NBodyManager.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 
 #include "BHRandom.hpp"
+
+using Conserved = util::FieldList<"Px", "Py", "Pz", "ID">;
+using Dependent = util::FieldList<"Ex", "Ey", "Ez", "ugrav">;
 
 namespace ippl::nbody {
 
@@ -20,10 +24,10 @@ namespace ippl::nbody {
 // during template instantiation, so no definition is required at link time even
 // though the declaration must be in scope for the discarded branch to parse.
 template <class P>
-typename P::Tc reduceExSumSq(SphexaParticleContainer<P, 3>& pc);
+typename P::Tc reduceExSumSq(NBodyParticleContainer<P, 3>& pc);
 
 template <class P>
-typename P::Tc reduceExGridEnergyCIC(SphexaParticleContainer<P, 3>& pc,
+typename P::Tc reduceExGridEnergyCIC(NBodyParticleContainer<P, 3>& pc,
                                      typename P::Tc L, int G);
 
 namespace landau_detail {
@@ -46,10 +50,7 @@ KOKKOS_INLINE_FUNCTION Tc inverseLandauCdf(Tc u, Tc alpha, Tc k) {
 // no curand. Runs on the GPU (CUDA/HIP) or host threads (OpenMP/Serial) per the
 // build's execution space.
 template <class P>
-inline void sampleLandauIC(SphexaParticleContainer<P, 3>& pc,
-                           FieldVector<typename P::Tc>& Px,
-                           FieldVector<typename P::Tc>& Py,
-                           FieldVector<typename P::Tc>& Pz,
+inline void sampleLandauIC(NBodyParticleContainer<P, 3>& pc,
                            unsigned localN,
                            unsigned long firstGlobal,
                            typename P::Tc alpha,
@@ -70,7 +71,7 @@ inline void sampleLandauIC(SphexaParticleContainer<P, 3>& pc,
     const Tc Lx   = box.lx(),   Ly   = box.ly(),   Lz   = box.lz();
 
     Tc* Rx = getRaw<"Rx">(pc); Tc* Ry = getRaw<"Ry">(pc); Tc* Rz = getRaw<"Rz">(pc);
-    Tc* px = Px.data();        Tc* py = Py.data();        Tc* pz = Pz.data();
+    Tc* px = getRaw<"Px">(pc); Tc* py = getRaw<"Py">(pc); Tc* pz = getRaw<"Pz">(pc);
     Tm* q  = getRaw<"charge">(pc);
     Th* h  = getRaw<"h">(pc);
     const uint64_t base = static_cast<uint64_t>(seed) + static_cast<uint64_t>(firstGlobal);
@@ -149,13 +150,11 @@ public:
 protected:
 
     void prepareSolverInputs(bool collect) override {
-        using C = SphexaParticleContainer<P, 3>;
-        constexpr auto idxCharge = C::template idxOf<"charge">;
         auto& pc = this->pc();
         {
             static auto t = IpplTimings::getTimer("bh.syncGrav");
             ippl::nbody::GpuTimer scope(t, collect);
-            pc.template updateGrav<idxCharge>(this->id_, this->px_, this->py_, this->pz_);
+            syncGravBH<P, Conserved, Dependent>(pc);
         }
         {
             static auto t = IpplTimings::getTimer("bh.haloCharge");
@@ -182,7 +181,6 @@ protected:
 
     void initializeParticles() override {
         sampleLandauIC<P>(this->pc(),
-                          this->px_, this->py_, this->pz_,
                           static_cast<unsigned>(this->localN()),
                           this->firstGlobal(),
                           alpha_m, k_m, k_m, k_m,
@@ -211,7 +209,6 @@ protected:
     void advanceImpl() override {
         this->kickHalf();
         this->drift();
-        this->wrap();
         this->solve();
         this->kickHalf();
     }

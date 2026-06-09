@@ -33,7 +33,12 @@ template <class T>
 KOKKOS_INLINE_FUNCTION T bhNormal(uint64_t& state) {
     T u1 = bhUniform<T>(state);
     T u2 = bhUniform<T>(state);
-    if (u1 < T(1e-300)) { u1 = T(1e-300); }   // guard the log
+    // Guard the log against u1 == 0. bhUniform yields k*2^-53 for integer k, so the
+    // only value that breaks log is k == 0; clamp it to the smallest positive uniform
+    // (2^-53). A compile-time constant, so it stays device-callable (unlike host-only
+    // std::numeric_limits::min) and is representable in float (unlike a 1e-300 double).
+    constexpr T tiny = static_cast<T>(1.0 / 9007199254740992.0);
+    if (u1 < tiny) { u1 = tiny; }
     return Kokkos::sqrt(T(-2) * Kokkos::log(u1)) *
            Kokkos::cos(T(6.283185307179586) * u2);
 }

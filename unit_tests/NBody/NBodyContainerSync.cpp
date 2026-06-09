@@ -1,6 +1,6 @@
-// Sanity test for SphexaParticleContainer<DoublePrecision, 3>.
-// Verifies that update(...) (which wraps cstone::Domain::sync) permutes a
-// driver-owned ID array in lockstep with positions.
+// Sanity test for NBodyParticleContainer<DoublePrecision, 3>.
+// Verifies that updateBH<ConservedFields>(...) (which wraps cstone::Domain::sync)
+// permutes the container-resident ID array in lockstep with positions.
 
 #include <algorithm>
 #include <cstdint>
@@ -13,18 +13,19 @@
 #include "Ippl.h"
 #include "cstone/sfc/box.hpp"
 
-#include "NBody/SphexaParticleContainer.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 #include "NBodyTestUtil.hpp"
 
 using ippl::nbody::DoublePrecision;
-using ippl::nbody::FieldVector;
-using ippl::nbody::SphexaParticleContainer;
+using ippl::nbody::NBodyParticleContainer;
+using ippl::nbody::updateBH;
 using ippl::nbody::test::downloadDevice;
 using ippl::nbody::test::uploadHost;
+namespace fields = ippl::nbody::fields;
 
 namespace {
 
-using PC     = SphexaParticleContainer<DoublePrecision, 3>;
+using PC     = NBodyParticleContainer<DoublePrecision, 3>;
 using IdType = PC::IdType;
 
 constexpr unsigned kN              = 8192;
@@ -33,7 +34,6 @@ constexpr unsigned kBucketSizeFoc  = 64;
 constexpr float    kTheta          = 0.5f;
 
 void verifyLockstep(PC& pc,
-                    const FieldVector<IdType>& id,
                     const std::vector<double>& xPre,
                     const std::vector<double>& yPre,
                     const std::vector<double>& zPre) {
@@ -50,7 +50,7 @@ void verifyLockstep(PC& pc,
     downloadDevice(ippl::nbody::getRaw<"Rx">(pc), nWithHalos, xPost);
     downloadDevice(ippl::nbody::getRaw<"Ry">(pc), nWithHalos, yPost);
     downloadDevice(ippl::nbody::getRaw<"Rz">(pc), nWithHalos, zPost);
-    downloadDevice(id.data(),                      nWithHalos, idPost);
+    downloadDevice(ippl::nbody::getRaw<"ID">(pc), nWithHalos, idPost);
 
     std::unordered_set<IdType> seen;
     seen.reserve(end - start);
@@ -67,7 +67,7 @@ void verifyLockstep(PC& pc,
 
 } // namespace
 
-TEST(SphexaParticleContainer, SyncPermutesAttributesInLockstep) {
+TEST(NBodyParticleContainer, SyncPermutesAttributesInLockstep) {
     using cstone::BoundaryType;
 
     PC pc(/*rank=*/0, /*nRanks=*/1,
@@ -77,9 +77,6 @@ TEST(SphexaParticleContainer, SyncPermutesAttributesInLockstep) {
               BoundaryType::open, BoundaryType::open, BoundaryType::open});
 
     pc.create(kN);
-
-    FieldVector<IdType> id;
-    id.resize(kN);
 
     std::vector<double> xPre(kN), yPre(kN), zPre(kN), hPre(kN, 1.0e-2);
     std::vector<IdType> idPre(kN);
@@ -95,13 +92,13 @@ TEST(SphexaParticleContainer, SyncPermutesAttributesInLockstep) {
     uploadHost(yPre,  ippl::nbody::getRaw<"Ry">(pc));
     uploadHost(zPre,  ippl::nbody::getRaw<"Rz">(pc));
     uploadHost(hPre,  ippl::nbody::getRaw<"h">(pc));
-    uploadHost(idPre, id.data());
+    uploadHost(idPre, ippl::nbody::getRaw<"ID">(pc));
 
-    pc.update(id);
-    verifyLockstep(pc, id, xPre, yPre, zPre);
+    updateBH<DoublePrecision, fields::StdConserved>(pc);
+    verifyLockstep(pc, xPre, yPre, zPre);
 
-    pc.update(id);
-    verifyLockstep(pc, id, xPre, yPre, zPre);
+    updateBH<DoublePrecision, fields::StdConserved>(pc);
+    verifyLockstep(pc, xPre, yPre, zPre);
 }
 
 int main(int argc, char* argv[]) {

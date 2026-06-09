@@ -1,6 +1,8 @@
-// Periodic-wrap kernel tests. Three sub-tests:
+// Tests for the periodic wrap folded into leapfrogDrift. Zero momentum makes the
+// drift R += dt*P a no-op, leaving R = putInBox(R, box) — isolating the wrap.
+// Three sub-tests:
 //   1. AllPeriodicWrapsIntoBox  — all-periodic BCs, scattered positions wrap inside.
-//   2. OpenBCsLeavePositionsUntouched — open BCs are a no-op (no kernel launch).
+//   2. OpenBCsLeavePositionsUntouched — open BCs pass positions through unchanged.
 //   3. MixedBCsWrapOnlyPeriodicAxes — periodic in x, open in y and z.
 
 #include <cstdint>
@@ -11,16 +13,17 @@
 
 #include "Ippl.h"
 
-#include "NBody/SphexaParticleContainer.hpp"
-#include "NBody/PeriodicWrap.hpp"
+#include "NBody/physics/LeapfrogStepper.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 #include "NBodyTestUtil.hpp"
 
 using ippl::nbody::DoublePrecision;
-using ippl::nbody::FieldVector;
-using ippl::nbody::SphexaParticleContainer;
-using ippl::nbody::wrapToBox;
+using ippl::nbody::leapfrogDrift;
+using ippl::nbody::NBodyParticleContainer;
+using ippl::nbody::updateBH;
 using ippl::nbody::test::downloadDevice;
 using ippl::nbody::test::uploadHost;
+namespace fields = ippl::nbody::fields;
 
 namespace {
 
@@ -28,6 +31,18 @@ constexpr unsigned kN             = 256;
 constexpr unsigned kBucketSize    = 64;
 constexpr unsigned kBucketSizeFoc = 64;
 constexpr float    kTheta         = 0.5f;
+
+// Zero the momenta over the whole allocation, then drift: the wrap is the only
+// effect on positions.
+template <class P>
+void wrapViaDrift(NBodyParticleContainer<P, 3>& pc) {
+    using Tc = typename P::Tc;
+    std::vector<Tc> zero(pc.nWithHalos(), Tc(0));
+    uploadHost(zero, getRaw<"Px">(pc));
+    uploadHost(zero, getRaw<"Py">(pc));
+    uploadHost(zero, getRaw<"Pz">(pc));
+    leapfrogDrift<P>(pc, Tc(1));
+}
 
 // Generate kN positions scattered within one box-length outside the unit box,
 // i.e. [-0.9, 1.9)^3, so a single-box-length wrap (cstone::putInBox, matching the
@@ -40,7 +55,7 @@ void seedScatteredPositions(unsigned long seed,
                             std::vector<typename P::Tc>& y,
                             std::vector<typename P::Tc>& z,
                             std::vector<typename P::Th>& h,
-                            std::vector<typename SphexaParticleContainer<P, 3>::IdType>& id) {
+                            std::vector<typename NBodyParticleContainer<P, 3>::IdType>& id) {
     using Tc = typename P::Tc;
     using Th = typename P::Th;
     x.resize(kN); y.resize(kN); z.resize(kN);
@@ -67,35 +82,34 @@ T expectedWrap(T r, T lo, T L) {
 
 } // namespace
 
-TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
+TEST(LeapfrogDriftWrap, AllPeriodicWrapsIntoBox) {
     using T = double;
     using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<P, 3> pc(
+    NBodyParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
         std::array<BoundaryType, 3>{
             BoundaryType::periodic, BoundaryType::periodic, BoundaryType::periodic});
 
-    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN);
+    pc.create(kN);
 
     std::vector<T> xPre, yPre, zPre, hPre;
-    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
+    std::vector<typename NBodyParticleContainer<P, 3>::IdType> idPre;
     seedScatteredPositions<P>(/*seed=*/231, xPre, yPre, zPre, hPre, idPre);
 
     uploadHost(xPre,  getRaw<"Rx">(pc));
     uploadHost(yPre,  getRaw<"Ry">(pc));
     uploadHost(zPre,  getRaw<"Rz">(pc));
     uploadHost(hPre,  getRaw<"h">(pc));
-    uploadHost(idPre, deviceID.data());
 
-    // pc.update(deviceID) with out-of-box positions would fault inside cstone's SFC key
+    // A sync with out-of-box positions would fault inside cstone's SFC key
     // computation. Sync once with in-box positions to populate startIndex/endIndex,
-    // then overwrite with the scattered set and run wrap. This mirrors the real-world
-    // flow: drift produces possibly-out-of-box R, wrapToBox brings it back, then
-    // updateGrav re-syncs the tree.
+    // then overwrite with the scattered set and run the drift. This mirrors the
+    // real-world flow: drift produces possibly-out-of-box R and wraps it back in the
+    // same pass, then syncGravBH re-syncs the tree.
     {
         std::vector<T> xClamp(kN), yClamp(kN), zClamp(kN);
         ::srand48(/*seed=*/2310);
@@ -107,14 +121,14 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
         uploadHost(xClamp, getRaw<"Rx">(pc));
         uploadHost(yClamp, getRaw<"Ry">(pc));
         uploadHost(zClamp, getRaw<"Rz">(pc));
-        pc.update(deviceID);
+        updateBH<P, fields::StdConserved>(pc);
     }
 
     uploadHost(xPre, getRaw<"Rx">(pc));
     uploadHost(yPre, getRaw<"Ry">(pc));
     uploadHost(zPre, getRaw<"Rz">(pc));
 
-    wrapToBox<P>(pc);
+    wrapViaDrift<P>(pc);
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
@@ -132,24 +146,24 @@ TEST(PeriodicWrap, AllPeriodicWrapsIntoBox) {
     }
 }
 
-TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
+TEST(LeapfrogDriftWrap, OpenBCsLeavePositionsUntouched) {
     using T = double;
     using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<P, 3> pc(
+    NBodyParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
         std::array<BoundaryType, 3>{
             BoundaryType::open, BoundaryType::open, BoundaryType::open});
 
-    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN);
+    pc.create(kN);
 
     // Sync with in-box positions so the container has valid start/end indices.
     {
         std::vector<T> x(kN), y(kN), z(kN), h(kN, 1.0e-2);
-        std::vector<typename SphexaParticleContainer<P, 3>::IdType> id(kN);
+        std::vector<typename NBodyParticleContainer<P, 3>::IdType> id(kN);
         ::srand48(/*seed=*/2320);
         for (unsigned i = 0; i < kN; ++i) {
             x[i] = drand48(); y[i] = drand48(); z[i] = drand48();
@@ -159,19 +173,18 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
         uploadHost(y,  getRaw<"Ry">(pc));
         uploadHost(z,  getRaw<"Rz">(pc));
         uploadHost(h,  getRaw<"h">(pc));
-        uploadHost(id, deviceID.data());
-        pc.update(deviceID);
+        updateBH<P, fields::StdConserved>(pc);
     }
 
     // Now overwrite with deliberately-out-of-box positions.
     std::vector<T> xPre, yPre, zPre, hPre;
-    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
+    std::vector<typename NBodyParticleContainer<P, 3>::IdType> idPre;
     seedScatteredPositions<P>(/*seed=*/233, xPre, yPre, zPre, hPre, idPre);
     uploadHost(xPre, getRaw<"Rx">(pc));
     uploadHost(yPre, getRaw<"Ry">(pc));
     uploadHost(zPre, getRaw<"Rz">(pc));
 
-    wrapToBox<P>(pc);
+    wrapViaDrift<P>(pc);
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();
@@ -181,8 +194,8 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
     downloadDevice(getRaw<"Ry">(pc), end, yPost);
     downloadDevice(getRaw<"Rz">(pc), end, zPost);
 
-    // Open BCs → wrapToBox is a no-op (no kernel launch). Bytes should match
-    // exactly what we uploaded.
+    // Open BCs → putInBox passes positions through unchanged. With zero momentum
+    // the drift leaves them exactly as uploaded.
     for (unsigned j = start; j < end; ++j) {
         const unsigned src = j - start;
         EXPECT_DOUBLE_EQ(xPost[j], xPre[src]) << "j=" << j;
@@ -191,23 +204,23 @@ TEST(PeriodicWrap, OpenBCsLeavePositionsUntouched) {
     }
 }
 
-TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
+TEST(LeapfrogDriftWrap, MixedBCsWrapOnlyPeriodicAxes) {
     using T = double;
     using P = DoublePrecision;
     using cstone::BoundaryType;
 
-    SphexaParticleContainer<P, 3> pc(
+    NBodyParticleContainer<P, 3> pc(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<T, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
         std::array<BoundaryType, 3>{
             BoundaryType::periodic, BoundaryType::open, BoundaryType::open});
 
-    pc.create(kN); FieldVector<typename SphexaParticleContainer<P,3>::IdType> deviceID; deviceID.resize(kN);
+    pc.create(kN);
 
     {
         std::vector<T> x(kN), y(kN), z(kN), h(kN, 1.0e-2);
-        std::vector<typename SphexaParticleContainer<P, 3>::IdType> id(kN);
+        std::vector<typename NBodyParticleContainer<P, 3>::IdType> id(kN);
         ::srand48(/*seed=*/2330);
         for (unsigned i = 0; i < kN; ++i) {
             x[i] = drand48(); y[i] = drand48(); z[i] = drand48();
@@ -217,18 +230,17 @@ TEST(PeriodicWrap, MixedBCsWrapOnlyPeriodicAxes) {
         uploadHost(y,  getRaw<"Ry">(pc));
         uploadHost(z,  getRaw<"Rz">(pc));
         uploadHost(h,  getRaw<"h">(pc));
-        uploadHost(id, deviceID.data());
-        pc.update(deviceID);
+        updateBH<P, fields::StdConserved>(pc);
     }
 
     std::vector<T> xPre, yPre, zPre, hPre;
-    std::vector<typename SphexaParticleContainer<P, 3>::IdType> idPre;
+    std::vector<typename NBodyParticleContainer<P, 3>::IdType> idPre;
     seedScatteredPositions<P>(/*seed=*/235, xPre, yPre, zPre, hPre, idPre);
     uploadHost(xPre, getRaw<"Rx">(pc));
     uploadHost(yPre, getRaw<"Ry">(pc));
     uploadHost(zPre, getRaw<"Rz">(pc));
 
-    wrapToBox<P>(pc);
+    wrapViaDrift<P>(pc);
 
     const unsigned start = pc.startIndex();
     const unsigned end   = pc.endIndex();

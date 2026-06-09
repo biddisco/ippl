@@ -45,10 +45,10 @@ target_link_libraries(RyoanjiKernelCpu PRIVATE
 # API, using the portable up/download helper in NBodyTestUtil.hpp. Each provides
 # its own main() (ippl::initialize wraps MPI + Kokkos; cstone's Domain calls MPI
 # collectives unconditionally), so no USE_GTEST_MAIN. RDC stays off: these TUs
-# include <Kokkos_Core.hpp> via SphexaParticleContainer.hpp, which trips desul's
+# include <Kokkos_Core.hpp> via NBodyParticleContainer.hpp, which trips desul's
 # atomics check under relocatable device code.
-foreach(_t SphexaContainerSync SphexaContainerFieldList SphexaContainerAttribute
-           LeapfrogStepperBasics PeriodicWrapKernel)
+foreach(_t NBodyContainerSync NBodyContainerFieldList NBodyContainerAttribute
+           NBodyContainerInjectDestroy LeapfrogStepperBasics LeapfrogDriftWrap)
   add_ippl_test(${_t}
     SOURCES ${_t}.cpp
     NO_MPI
@@ -63,7 +63,7 @@ endforeach()
 if(CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
 
 if(CMAKE_HIP_COMPILER AND NOT CMAKE_CUDA_COMPILER)
-  set_source_files_properties(RyoanjiDirect.cu SphexaBHSolverDirect.cu PROPERTIES LANGUAGE HIP)
+  set_source_files_properties(RyoanjiDirect.cu NBodySolverDirect.cu PROPERTIES LANGUAGE HIP)
 endif()
 
 # GPU ryoanji test: exercises the direct N² kernel from ryoanji_kernels.
@@ -81,14 +81,14 @@ set_target_properties(RyoanjiDirect PROPERTIES
 
 # BH solver sanity test: BH ≈ direct N² on a small open-BC system. ippl::ryoanji
 # provides the GPU directSum() reference (instantiations in multipole_holder.cu).
-add_ippl_test(SphexaBHSolverDirect
-  SOURCES SphexaBHSolverDirect.cu
+add_ippl_test(NBodySolverDirect
+  SOURCES NBodySolverDirect.cu
   NO_MPI
   LABELS nbody gpu)
-target_link_libraries(SphexaBHSolverDirect PRIVATE
+target_link_libraries(NBodySolverDirect PRIVATE
   ippl::nbody
   ippl::ryoanji)
-set_target_properties(SphexaBHSolverDirect PROPERTIES
+set_target_properties(NBodySolverDirect PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 endif()  # CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER

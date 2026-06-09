@@ -12,8 +12,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "NBody/BeamDiagnostics.hpp"
+#include "NBody/physics/BeamDiagnostics.hpp"
 #include "NBody/NBodyManager.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 
 #include "BHRandom.hpp"
 
@@ -30,13 +31,10 @@ struct BeamStats12 {
 };
 
 template <class P>
-BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc,
-                                            const FieldVector<typename P::Tc>& Px,
-                                            const FieldVector<typename P::Tc>& Py,
-                                            const FieldVector<typename P::Tc>& Pz);
+BeamStats12<typename P::Tc> reduceBeamStats(NBodyParticleContainer<P, 3>& pc);
 
 template <class P>
-Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc);
+Triple<typename P::Tc> reduceMeanAbsAccel(NBodyParticleContainer<P, 3>& pc);
 
 // DIH IC: device-parallel uniform-in-sphere via Kokkos::parallel_for
 // (r = beamRad·u^(1/3), direction from three normals), counter-based RNG keyed
@@ -44,10 +42,7 @@ Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc);
 // field storage — no host buffers, no upload, no curand. Runs on GPU (CUDA/HIP)
 // or host threads (OpenMP/Serial) per the build's execution space.
 template <class P>
-inline void sampleDihIC(SphexaParticleContainer<P, 3>& pc,
-                        FieldVector<typename P::Tc>& Px,
-                        FieldVector<typename P::Tc>& Py,
-                        FieldVector<typename P::Tc>& Pz,
+inline void sampleDihIC(NBodyParticleContainer<P, 3>& pc,
                         unsigned localN,
                         unsigned long firstGlobal,
                         typename P::Tc beamRad,
@@ -59,7 +54,7 @@ inline void sampleDihIC(SphexaParticleContainer<P, 3>& pc,
     if (localN == 0) { return; }
 
     Tc* Rx = getRaw<"Rx">(pc); Tc* Ry = getRaw<"Ry">(pc); Tc* Rz = getRaw<"Rz">(pc);
-    Tc* px = Px.data();        Tc* py = Py.data();        Tc* pz = Pz.data();
+    Tc* px = getRaw<"Px">(pc); Tc* py = getRaw<"Py">(pc); Tc* pz = getRaw<"Pz">(pc);
     Tm* q  = getRaw<"charge">(pc);
     Th* h  = getRaw<"h">(pc);
     const uint64_t base = static_cast<uint64_t>(seed) + static_cast<uint64_t>(firstGlobal);
@@ -94,7 +89,7 @@ namespace dih_detail {
 // y, z). Over [startIndex(), endIndex()). Defined in
 // DisorderHeatingBHManager.{cu,cpp} (GPU kernel / OpenMP loop).
 template <class P>
-void applyFocusing(SphexaParticleContainer<P, 3>& pc,
+void applyFocusing(NBodyParticleContainer<P, 3>& pc,
                    typename P::Tc strength,
                    typename P::Tc beamRad);
 
@@ -233,13 +228,11 @@ public:
 
 protected:
     void prepareSolverInputs(bool collect) override {
-        using C = SphexaParticleContainer<P, 3>;
-        constexpr auto idxCharge = C::template idxOf<"charge">;
         auto& pc = this->pc();
         {
             static auto t = IpplTimings::getTimer("bh.syncGrav");
             ippl::nbody::GpuTimer scope(t, collect);
-            pc.template updateGrav<idxCharge>(this->id_, this->px_, this->py_, this->pz_);
+            syncGravBH<P, fields::StdConserved, fields::StdDependent>(pc);
         }
         {
             static auto t = IpplTimings::getTimer("bh.haloCharge");
@@ -269,7 +262,6 @@ protected:
     void initializeParticles() override {
         if (cfg_m.mode == Mode::Generator) {
             sampleDihIC<P>(this->pc(),
-                           this->px_, this->py_, this->pz_,
                            static_cast<unsigned>(this->localN()),
                            this->firstGlobal(),
                            beamRad_m,
@@ -287,13 +279,16 @@ protected:
         this->pc().template getDV<"Ry">() = std::vector<Tc>(hy_m.begin(), hy_m.end());
         this->pc().template getDV<"Rz">() = std::vector<Tc>(hz_m.begin(), hz_m.end());
 
-        Tm* qd = getRaw<"charge">(this->pc());
-        Th* hd = getRaw<"h">(this->pc());
+        Tm* qd  = getRaw<"charge">(this->pc());
+        Th* hd  = getRaw<"h">(this->pc());
+        Tc* pxd = getRaw<"Px">(this->pc());
+        Tc* pyd = getRaw<"Py">(this->pc());
+        Tc* pzd = getRaw<"Pz">(this->pc());
         cstone::fill<kHaveGpu>(qd, qd + localN, Tm(1));
         cstone::fill<kHaveGpu>(hd, hd + localN, smoothH_m);
-        cstone::fill<kHaveGpu>(this->px_.data(), this->px_.data() + localN, Tc(0));
-        cstone::fill<kHaveGpu>(this->py_.data(), this->py_.data() + localN, Tc(0));
-        cstone::fill<kHaveGpu>(this->pz_.data(), this->pz_.data() + localN, Tc(0));
+        cstone::fill<kHaveGpu>(pxd, pxd + localN, Tc(0));
+        cstone::fill<kHaveGpu>(pyd, pyd + localN, Tc(0));
+        cstone::fill<kHaveGpu>(pzd, pzd + localN, Tc(0));
         this->pc().setUniformH(smoothH_m);
 
         hx_m.clear(); hx_m.shrink_to_fit();
@@ -349,7 +344,7 @@ protected:
         // reductions inside MPI_Allreduce — but only rank 0 writes/prints.
         const int step = this->it() - 1;
         const bool isInitial = (step == -1);
-        printDihStats(this->pc(), this->px_, this->py_, this->pz_,
+        printDihStats(this->pc(),
                       csvPath_m, step, isInitial, this->N(),
                       this->rank() == 0);
 
@@ -368,14 +363,11 @@ private:
     // internal MPI_Allreduce, so every rank holds the global value after the
     // call. The 1/N normalization uses the *global* N (passed in). Only rank 0
     // writes to stdout and to the CSV.
-    static void printDihStats(SphexaParticleContainer<P, 3>& pc,
-                              const FieldVector<Tc>& Px,
-                              const FieldVector<Tc>& Py,
-                              const FieldVector<Tc>& Pz,
+    static void printDihStats(NBodyParticleContainer<P, 3>& pc,
                               const std::string& fnameCsv,
                               int step, bool isInitial,
                               unsigned long globalN, bool isRoot) {
-        auto bs    = reduceBeamStats<P>(pc, Px, Py, Pz);
+        auto bs    = reduceBeamStats<P>(pc);
         const Tc invN = Tc(1) / static_cast<Tc>(globalN);
         for (int i = 0; i < 12; ++i) { bs.vals[i] *= invN; }
 
@@ -387,8 +379,8 @@ private:
         const Tc emit_y  = safeSqrt(bs.vals[3] * bs.vals[4] - bs.vals[5] * bs.vals[5]);
         const Tc emit_z  = safeSqrt(bs.vals[6] * bs.vals[7] - bs.vals[8] * bs.vals[8]);
 
-        auto avgV = reduceMeanVelocity<P>(pc, Px, Py, Pz);
-        auto T3   = reduceTemperature<P>(pc, Px, Py, Pz, avgV);
+        auto avgV = reduceMeanVelocity<P>(pc);
+        auto T3   = reduceTemperature<P>(pc, avgV);
         const Tc Tnorm = std::sqrt(T3.x * T3.x + T3.y * T3.y + T3.z * T3.z);
 
         if (!isRoot) { return; }

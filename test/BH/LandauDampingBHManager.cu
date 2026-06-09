@@ -25,7 +25,7 @@ struct SquarePromoteOp {
 // sampler lives in the header now (host-side, sphexa-style); this TU only holds
 // the device reduction.
 template <class P>
-typename P::Tc reduceExSumSq(SphexaParticleContainer<P, 3>& pc) {
+typename P::Tc reduceExSumSq(NBodyParticleContainer<P, 3>& pc) {
     using Tc = typename P::Tc;
     using Ta = typename P::Ta;
 
@@ -40,12 +40,12 @@ typename P::Tc reduceExSumSq(SphexaParticleContainer<P, 3>& pc) {
                                          Tc(0), thrust::plus<Tc>());
     }
     Tc out = Tc(0);
-    ::mpiAllreduce(&local, &out, 1, MPI_SUM, MPI_COMM_WORLD);
+    ::mpiAllreduce(&local, &out, 1, MPI_SUM, pc.comm());
     return out;
 }
 
-template double reduceExSumSq<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&);
-template double reduceExSumSq<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&);
-template float  reduceExSumSq<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&);
+template double reduceExSumSq<DoublePrecision>(NBodyParticleContainer<DoublePrecision, 3>&);
+template double reduceExSumSq<MixedPrecision> (NBodyParticleContainer<MixedPrecision,  3>&);
+template float  reduceExSumSq<FloatPrecision> (NBodyParticleContainer<FloatPrecision,  3>&);
 
 }  // namespace ippl::nbody

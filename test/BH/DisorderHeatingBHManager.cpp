@@ -9,10 +9,7 @@ namespace ippl::nbody {
 // CPU counterpart of DisorderHeatingBHManager.cu: OpenMP reductions + focusing.
 // (The IC sampler is host-side in the header, shared by both backends.)
 template <class P>
-BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc,
-                                            const FieldVector<typename P::Tc>& Px,
-                                            const FieldVector<typename P::Tc>& Py,
-                                            const FieldVector<typename P::Tc>& Pz) {
+BeamStats12<typename P::Tc> reduceBeamStats(NBodyParticleContainer<P, 3>& pc) {
     using Tc = typename P::Tc;
     const long start = static_cast<long>(pc.startIndex());
     const long end   = static_cast<long>(pc.endIndex());
@@ -20,7 +17,7 @@ BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc,
     Tc local[12] = {Tc(0)};
     if (end > start) {
         const Tc* Rx = getRaw<"Rx">(pc); const Tc* Ry = getRaw<"Ry">(pc); const Tc* Rz = getRaw<"Rz">(pc);
-        const Tc* px = Px.data();        const Tc* py = Py.data();        const Tc* pz = Pz.data();
+        const Tc* px = getRaw<"Px">(pc); const Tc* py = getRaw<"Py">(pc); const Tc* pz = getRaw<"Pz">(pc);
         Tc s0=0, s1=0, s2=0, s3=0, s4=0, s5=0, s6=0, s7=0, s8=0, s9=0, s10=0, s11=0;
 #pragma omp parallel for schedule(static) \
     reduction(+ : s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11)
@@ -34,12 +31,12 @@ BeamStats12<typename P::Tc> reduceBeamStats(SphexaParticleContainer<P, 3>& pc,
         local[6]=s6; local[7]=s7; local[8]=s8; local[9]=s9; local[10]=s10; local[11]=s11;
     }
     BeamStats12<Tc> out{};
-    ::mpiAllreduce(local, out.vals, 12, MPI_SUM, MPI_COMM_WORLD);
+    ::mpiAllreduce(local, out.vals, 12, MPI_SUM, pc.comm());
     return out;
 }
 
 template <class P>
-Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc) {
+Triple<typename P::Tc> reduceMeanAbsAccel(NBodyParticleContainer<P, 3>& pc) {
     using Tc = typename P::Tc;
     using Ta = typename P::Ta;
     const long start = static_cast<long>(pc.startIndex());
@@ -62,18 +59,14 @@ Triple<typename P::Tc> reduceMeanAbsAccel(SphexaParticleContainer<P, 3>& pc) {
         local[3] = static_cast<Tc>(end - start);
     }
     Tc global[4] = {Tc(0), Tc(0), Tc(0), Tc(0)};
-    ::mpiAllreduce(local, global, 4, MPI_SUM, MPI_COMM_WORLD);
+    ::mpiAllreduce(local, global, 4, MPI_SUM, pc.comm());
     const Tc invN = (global[3] > Tc(0)) ? Tc(1) / global[3] : Tc(0);
     return Triple<Tc>{global[0] * invN, global[1] * invN, global[2] * invN};
 }
 
 #define INSTANTIATE_DIH_REDUCE(POLICY, T)                                  \
-    template BeamStats12<T> reduceBeamStats<POLICY>(                       \
-        SphexaParticleContainer<POLICY, 3>&,                               \
-        const FieldVector<POLICY::Tc>&,                                    \
-        const FieldVector<POLICY::Tc>&,                                    \
-        const FieldVector<POLICY::Tc>&);                                   \
-    template Triple<T> reduceMeanAbsAccel<POLICY>(SphexaParticleContainer<POLICY, 3>&);
+    template BeamStats12<T> reduceBeamStats<POLICY>(NBodyParticleContainer<POLICY, 3>&); \
+    template Triple<T> reduceMeanAbsAccel<POLICY>(NBodyParticleContainer<POLICY, 3>&);
 
 INSTANTIATE_DIH_REDUCE(DoublePrecision, double)
 INSTANTIATE_DIH_REDUCE(MixedPrecision,  double)
@@ -84,7 +77,7 @@ INSTANTIATE_DIH_REDUCE(FloatPrecision,  float)
 namespace dih_detail {
 
 template <class P>
-void applyFocusing(SphexaParticleContainer<P, 3>& pc,
+void applyFocusing(NBodyParticleContainer<P, 3>& pc,
                    typename P::Tc strength,
                    typename P::Tc beamRad) {
     using Tc = typename P::Tc;
@@ -103,9 +96,9 @@ void applyFocusing(SphexaParticleContainer<P, 3>& pc,
     }
 }
 
-template void applyFocusing<DoublePrecision>(SphexaParticleContainer<DoublePrecision, 3>&, double, double);
-template void applyFocusing<MixedPrecision> (SphexaParticleContainer<MixedPrecision,  3>&, double, double);
-template void applyFocusing<FloatPrecision> (SphexaParticleContainer<FloatPrecision,  3>&, float,  float);
+template void applyFocusing<DoublePrecision>(NBodyParticleContainer<DoublePrecision, 3>&, double, double);
+template void applyFocusing<MixedPrecision> (NBodyParticleContainer<MixedPrecision,  3>&, double, double);
+template void applyFocusing<FloatPrecision> (NBodyParticleContainer<FloatPrecision,  3>&, float,  float);
 
 }  // namespace dih_detail
 

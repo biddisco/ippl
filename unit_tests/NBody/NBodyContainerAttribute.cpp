@@ -1,4 +1,4 @@
-// Sanity test for ippl::nbody::ParticleAttrib + SphexaParticleContainer::addAttribute.
+// Sanity test for ippl::nbody::ParticleAttrib + NBodyParticleContainer::addAttribute.
 //
 // Verifies that user-registered attributes are resized in lockstep with the
 // built-in attributes on create(), regardless of registration order, and that
@@ -11,14 +11,14 @@
 
 #include "Ippl.h"
 
-#include "NBody/BHPrecision.hpp"
-#include "NBody/ParticleAttrib.hpp"
-#include "NBody/SphexaParticleContainer.hpp"
+#include "NBody/core/BHPrecision.hpp"
+#include "NBody/core/ParticleAttrib.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 #include "NBodyTestUtil.hpp"
 
 using ippl::nbody::DoublePrecision;
 using ippl::nbody::ParticleAttrib;
-using ippl::nbody::SphexaParticleContainer;
+using ippl::nbody::NBodyParticleContainer;
 using ippl::nbody::test::downloadDevice;
 using ippl::nbody::test::uploadHost;
 
@@ -29,9 +29,9 @@ constexpr unsigned kBucketSize    = 64;
 constexpr unsigned kBucketSizeFoc = 64;
 constexpr float    kTheta         = 0.5f;
 
-SphexaParticleContainer<DoublePrecision, 3> makeContainer() {
+NBodyParticleContainer<DoublePrecision, 3> makeContainer() {
     using cstone::BoundaryType;
-    return SphexaParticleContainer<DoublePrecision, 3>(
+    return NBodyParticleContainer<DoublePrecision, 3>(
         /*rank=*/0, /*nRanks=*/1,
         kBucketSize, kBucketSizeFoc, kTheta,
         std::array<double, 6>{0.0, 1.0, 0.0, 1.0, 0.0, 1.0},
@@ -41,7 +41,7 @@ SphexaParticleContainer<DoublePrecision, 3> makeContainer() {
 
 } // namespace
 
-TEST(SphexaContainerAttribute, RegisterBeforeCreateSizesAttribute) {
+TEST(NBodyContainerAttribute, RegisterBeforeCreateSizesAttribute) {
     auto pc = makeContainer();
 
     ParticleAttrib<float>    tag;
@@ -63,7 +63,7 @@ TEST(SphexaContainerAttribute, RegisterBeforeCreateSizesAttribute) {
     EXPECT_EQ(color.size(), kN);
 }
 
-TEST(SphexaContainerAttribute, RegisterAfterCreateBackfillsSize) {
+TEST(NBodyContainerAttribute, RegisterAfterCreateBackfillsSize) {
     auto pc = makeContainer();
     pc.create(kN);
 
@@ -74,7 +74,7 @@ TEST(SphexaContainerAttribute, RegisterAfterCreateBackfillsSize) {
     EXPECT_EQ(tag.size(), kN);
 }
 
-TEST(SphexaContainerAttribute, DeviceStorageIsUsable) {
+TEST(NBodyContainerAttribute, DeviceStorageIsUsable) {
     auto pc = makeContainer();
 
     ParticleAttrib<float> tag;

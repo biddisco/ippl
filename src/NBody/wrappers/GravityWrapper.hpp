@@ -1,14 +1,27 @@
-#ifndef IPPL_NBODY_GRAVITY_WRAPPER_HPP
-#define IPPL_NBODY_GRAVITY_WRAPPER_HPP
+/*
+ * IPPL Barnes-Hut
+ * 
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ * 
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
 
-// Vendored from SPH-EXA main/src/propagator/gravity_wrapper.hpp (MIT).
+/*! @file
+ * @brief Gravity wrapper vendored from sphexa
+ * 
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#pragma once
+
 // Local adaptations for the IPPL fork:
 //   - namespace ippl::nbody (was sphexa)
 //   - scalar types derived via std::declval (our container/DataType is not
 //     default-constructible — it owns a cstone::Domain)
 //   - setEwaldSettings() so the BH solver can pass numShells / Ewald params
 //   - the per-step MPI stats printout + stack-exhaustion guard live in the
-//     solver (SphexaBHSolver), not here; the holders stay pure-compute
+//     solver (NBodySolver), not here; the holders stay pure-compute
 //
 // MultipoleHolderCpu / MultipoleHolderGpu present an identical
 // computeSpatialGroups / upsweep / traverse / readStats interface. The BH solver
@@ -153,5 +166,3 @@ using MultipoleHolder = std::conditional_t<cstone::HaveGpu<Acc>{},
                                            MultipoleHolderCpu<MType, DomainType, DataType>>;
 
 }  // namespace ippl::nbody
-
-#endif  // IPPL_NBODY_GRAVITY_WRAPPER_HPP

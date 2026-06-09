@@ -1,11 +1,25 @@
-#ifndef IPPL_NBODY_GPU_TIMER_HPP
-#define IPPL_NBODY_GPU_TIMER_HPP
+/*
+ * IPPL Barnes-Hut
+ * 
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ * 
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
+
+/*! @file
+ * @brief Small wrapper for IPPL-Style scoped timer for NBody simulations
+ *
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#pragma once
 
 #include "cstone/cuda/cuda_utils.hpp"  // syncGpu (real on GPU builds, stub decl on CPU)
 
 #include "Utility/IpplTimings.h"
 
-#include "NBody/Accelerator.hpp"
+#include "NBody/core/Accelerator.hpp"
 
 namespace ippl::nbody {
 
@@ -32,5 +46,3 @@ private:
 };
 
 } // namespace ippl::nbody
-
-#endif // IPPL_NBODY_GPU_TIMER_HPP

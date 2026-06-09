@@ -1,7 +1,7 @@
 // Landau Damping test — Barnes-Hut backend.
 //
 // Mirrors alpine/LandauDamping.cpp but routes the field solve through
-// ippl::nbody::SphexaBHSolver instead of FFT-PIC. Simulation logic lives in
+// ippl::nbody::NBodySolver instead of FFT-PIC. Simulation logic lives in
 // LandauDampingBHManager (test/BH/LandauDampingBHManager.hpp).
 //
 //   Usage:

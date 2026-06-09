@@ -1,8 +1,22 @@
-#ifndef IPPL_NBODY_PARTICLE_ATTRIB_HPP
-#define IPPL_NBODY_PARTICLE_ATTRIB_HPP
+/*
+ * IPPL Barnes-Hut
+ * 
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *               2026 PSI, Villigen
+ * 
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
 
-#include "NBody/Accelerator.hpp"
-#include "NBody/ParticleAttribBase.hpp"
+/*! @file
+ * @brief minimal particle attribute class to mirror class hierarchy
+ * 
+ * @author Timo Schwab, <tischwab@ethz.ch>
+ */
+#pragma once
+
+#include "NBody/core/Accelerator.hpp"
+#include "NBody/core/ParticleAttribBase.hpp"
 
 namespace ippl::nbody {
 
@@ -25,5 +39,3 @@ private:
 };
 
 } // namespace ippl::nbody
-
-#endif // IPPL_NBODY_PARTICLE_ATTRIB_HPP

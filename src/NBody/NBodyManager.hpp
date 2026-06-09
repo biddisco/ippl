@@ -1,3 +1,17 @@
+/*
+ * IPPL Barnes-Hut 
+ *
+ * Copyright (c) 2026 CSCS, ETH Zurich
+ *
+ * Please refer to the LICENSE file in the root directory
+ * SPDX-License-Identifier: GPL-3.0
+ */
+
+/*! @file
+ * @brief A base class to derive simulation managers for NBody simulations 
+ * 
+ * @author Timo Schwab <tischwab@ethz.ch>
+ */
 #ifndef IPPL_NBODY_MANAGER_HPP
 #define IPPL_NBODY_MANAGER_HPP
 
@@ -7,13 +21,12 @@
 #include "Manager/BaseManager.h"
 #include "Utility/IpplTimings.h"
 
-#include "NBody/Accelerator.hpp"
-#include "NBody/BHPrecision.hpp"
-#include "NBody/GpuTimer.hpp"
-#include "NBody/LeapfrogStepper.hpp"
-#include "NBody/PeriodicWrap.hpp"
-#include "NBody/SphexaBHSolver.hpp"
-#include "NBody/SphexaParticleContainer.hpp"
+#include "NBody/core/Accelerator.hpp"
+#include "NBody/core/BHPrecision.hpp"
+#include "NBody/helpers/GpuTimer.hpp"
+#include "NBody/physics/LeapfrogStepper.hpp"
+#include "NBody/NBodySolver.hpp"
+#include "NBody/NBodyParticleContainer.hpp"
 
 namespace ippl::nbody {
 
@@ -46,11 +59,8 @@ private:
 //
 // Templated on a precision policy P (NBody/BHPrecision.hpp). All inner types
 // (container, solver, leapfrog, diagnostics) take the same P so a single
-// template parameter selects the precision config end-to-end.
-//
-// Timing: every physics-active helper is wrapped with a ScopedIpplTimer so a
-// per-function breakdown lands in IpplTimings::print() at the end of the run.
-// The driver still controls the outer "total" timer.
+// template parameter selects the precision config end-to-end. Available 
+// policies are: DoublePrecision, MixedPrecision, FloatPrecision
 //
 // Lifetime / ownership:
 //   - The base owns the container and the solver as unique_ptrs. Both are
@@ -62,10 +72,11 @@ private:
 // Required overrides in derived classes:
 //   initializeContainer()   - construct pcontainer_m with the right box/BCs
 //   initializeParticles()   - fill positions, velocities, charges, h
-//   advanceImpl()           - one timestep (KDK, drift-then-kick, etc.)
+//   advanceImpl()           - one timestep
+//   prepareSolverInputs()   - syncGrav + exchangeHalos
 //
 // Optional overrides:
-//   initializeSolverParams(Params&)  - tweak G, theta, Ewald shells
+//   initializeSolverParams(Params&)  - define G, theta, Ewald shells
 //   post_initial_solve()             - hook between t=0 BH solve and t=0 dump
 //                                       (e.g. DIH calibrates focusing here)
 //   dumpImpl()                       - write CSV row / stdout report
@@ -79,8 +90,8 @@ class NBodyManager : public ippl::BaseManager {
 public:
     using Precision    = P;
     using Tc           = typename P::Tc;
-    using Container    = SphexaParticleContainer<P, Dim>;
-    using Solver       = SphexaBHSolver<P, Dim>;
+    using Container    = NBodyParticleContainer<P, Dim>;
+    using Solver       = NBodySolver<P, Dim>;
     using SolverParams = typename Solver::Params;
 
     NBodyManager(unsigned long N, int Nt, Tc dt)
@@ -107,15 +118,12 @@ public:
             ScopedIpplTimer scope(tInit);
             initializeContainer();
             // Allocate per-rank storage. Derived managers fill only the local
-            // slice [0, localN()); after the first updateGrav() inside
-            // runSolver(), cstone reshards globally and [startIndex(),
+            // slice [0, localN()); after the first sync (syncGravBH) inside
+            // prepareSolverInputs(), cstone reshards globally and [startIndex(),
             // endIndex()) becomes this rank's owned range.
+            // Halo particles are stored in [0,startIndex()) and [endIndex(), N).
             const unsigned n0 = static_cast<unsigned>(localN());
             pcontainer_m->create(n0);
-            id_.resize(n0);
-            px_.resize(n0);
-            py_.resize(n0);
-            pz_.resize(n0);
             initializeParticles();
 
             SolverParams bhParams;
@@ -127,9 +135,6 @@ public:
             ScopedIpplTimer scope(tFirstSolv);
             // warmup=true: the t=0 solve is timed only by the outer
             // "firstSolve" timer; the per-scope bh.* accumulators and the
-            // per-step bh.stats printout are reserved for the advance() loop
-            // so they reflect a pure per-step number directly comparable to
-            // sphexa's "Gravity" timer.
             prepareSolverInputs(/*collect=*/false);
             solver_m->runSolver(/*warmup=*/true);
         }
@@ -140,9 +145,8 @@ public:
         dump();
     }
 
-    // BaseManager::advance() is pure-virtual. We seal it here to wrap the
-    // derived implementation in a "step" timer; derived classes override
-    // advanceImpl() instead.
+    // BaseManager::advance() is pure-virtual. NBodyManager::advance() wraps
+    // advanceImpl() in a "step" timer. Derived classes override advanceImpl().
     void advance() final {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("step");
         ScopedIpplTimer scope(t);
@@ -173,7 +177,7 @@ protected:
     virtual void dumpImpl() {}
 
     // Sealed dump() wraps dumpImpl() in a "dump" timer. Derived classes
-    // implement dumpImpl() and don't need to instrument it themselves.
+    // implement dumpImpl().
     void dump() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("dump");
         ScopedIpplTimer scope(t);
@@ -184,25 +188,19 @@ protected:
     void kickHalf() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("kickHalf");
         ScopedIpplTimer scope(t);
-        leapfrogKickHalf<P>(*pcontainer_m, px_, py_, pz_, dt_m);
+        leapfrogKickHalf<P>(*pcontainer_m, dt_m);
     }
 
     void kickFull() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("kickFull");
         ScopedIpplTimer scope(t);
-        leapfrogKick<P>(*pcontainer_m, px_, py_, pz_, dt_m);
+        leapfrogKick<P>(*pcontainer_m, dt_m);
     }
 
     void drift() {
         static IpplTimings::TimerRef t = IpplTimings::getTimer("drift");
         ScopedIpplTimer scope(t);
-        leapfrogDrift<P>(*pcontainer_m, px_, py_, pz_, dt_m);
-    }
-
-    void wrap() {
-        static IpplTimings::TimerRef t = IpplTimings::getTimer("wrap");
-        ScopedIpplTimer scope(t);
-        wrapToBox<P>(*pcontainer_m);
+        leapfrogDrift<P>(*pcontainer_m, dt_m);
     }
 
     void solve() {
@@ -223,8 +221,6 @@ protected:
     Tc               dt()   const     { return dt_m;   }
     unsigned long    N()    const     { return N_m;    }
 
-    // MPI-aware accessors. rank/size come from ippl::Comm so derived managers
-    // don't need to care whether we're running 1 rank or 1024.
     int              rank()    const  { return ippl::Comm->rank(); }
     int              numRanks() const { return ippl::Comm->size(); }
 
@@ -247,15 +243,8 @@ protected:
     }
 
 protected:
-    using IdType = typename Container::IdType;
-
     std::unique_ptr<Container> pcontainer_m;
     std::unique_ptr<Solver>    solver_m;
-
-    // Driver-owned conserved fields. Sized in lockstep with pc.create() and
-    // permuted/redistributed by cstone when passed to pc.updateGrav(...).
-    FieldVector<IdType> id_;
-    FieldVector<Tc>     px_, py_, pz_;
 
     unsigned long N_m;
     int           Nt_m;
