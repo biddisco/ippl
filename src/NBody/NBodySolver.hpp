@@ -67,5 +67,3 @@ private:
 };
 
 } // namespace ippl::nbody
-
-#endif // IPPL_NBODY_SOLVER_HPP
