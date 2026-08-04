@@ -13,6 +13,7 @@ build*/
 *~
 *.~
 *.orig
+extern/**
 
 # ignore build directories
 build*/
@@ -20,6 +21,7 @@ build*/
 # ignore .vscode directory
 .vscode
 .cache
+.vscode/hunkwise/
 
 # mac
 .DS_Store
