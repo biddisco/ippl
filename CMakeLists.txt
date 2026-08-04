@@ -57,7 +57,8 @@ option(IPPL_MARK_FAILING_TESTS
        "Prefix names of tests that are known to fail with 'known_fail' for filtering with ctest"
        OFF)
 option(IPPL_ENABLE_SCRIPTS "Generate job script templates for some benchmarks/tests" OFF)
-option(IPPL_ENABLE_NBODY "Enable the gridless N-body (Barnes-Hut) module backed by Ryoanji + cstone" OFF)
+option(IPPL_ENABLE_NBODY
+       "Enable the gridless N-body (Barnes-Hut) module backed by Ryoanji + cstone" OFF)
 
 # "Build IPPL as a shared library (ON) or static library (OFF)" OFF) if(IPPL_DYL)
 # set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE) message(WARNING "IPPL_DYL is deprecated; use
@@ -106,28 +107,6 @@ if(DEFINED USE_ALTERNATIVE_VARIANT)
     WARNING ${Red}
     "USE_ALTERNATIVE_VARIANT is deprecated. Please set IPPL_USE_ALTERNATIVE_VARIANT instead.")
   set(IPPL_USE_ALTERNATIVE_VARIANT ${USE_ALTERNATIVE_VARIANT} CACHE BOOL "" FORCE)
-endif()
-
-# ------------------------------------------------------------------------------
-# N-body (Barnes-Hut) module — vendored cstone + ryoanji from SPH-EXA
-# ------------------------------------------------------------------------------
-if(IPPL_ENABLE_NBODY)
-  # Backend follows IPPL_PLATFORMS, exactly like sphexa selects AccType:
-  #   CUDA -> NVIDIA GPU (nvcc), HIP -> AMD GPU (hipcc), otherwise CPU.
-  # The vendored cstone/ryoanji build their GPU libraries only when a device
-  # language is enabled; on a CPU build they expose header-only INTERFACE
-  # targets and Domain<CpuTag> resolves header-only.
-  if("CUDA" IN_LIST IPPL_PLATFORMS)
-    enable_language(CUDA)
-    message(STATUS "NBody: CUDA (NVIDIA GPU) backend")
-  elseif("HIP" IN_LIST IPPL_PLATFORMS)
-    enable_language(HIP)
-    message(STATUS "NBody: HIP (AMD GPU) backend")
-  else()
-    message(STATUS "NBody: CPU backend (IPPL_PLATFORMS=${IPPL_PLATFORMS})")
-  endif()
-  add_subdirectory(extern/cstone)
-  add_subdirectory(extern/ryoanji)
 endif()
 
 # ------------------------------------------------------------------------------

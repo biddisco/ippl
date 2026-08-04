@@ -478,6 +478,30 @@ if(IPPL_ENABLE_FINUFFT)
 endif()
 
 # ------------------------------------------------------------------------------
+# N-body (Barnes-Hut) module — vendored cstone + ryoanji from SPH-EXA
+# ------------------------------------------------------------------------------
+if(IPPL_ENABLE_NBODY)
+  # Backend follows IPPL_PLATFORMS, exactly like sphexa selects AccType: CUDA -> NVIDIA GPU (nvcc),
+  # HIP -> AMD GPU (hipcc), otherwise CPU. The vendored cstone/ryoanji build their GPU libraries
+  # only when a device language is enabled; on a CPU build they expose header-only INTERFACE targets
+  # and Domain<CpuTag> resolves header-only.
+  if("CUDA" IN_LIST IPPL_PLATFORMS)
+    enable_language(CUDA)
+    message(STATUS "NBody: CUDA (NVIDIA GPU) backend")
+  elseif("HIP" IN_LIST IPPL_PLATFORMS)
+    enable_language(HIP)
+    message(STATUS "NBody: HIP (AMD GPU) backend")
+  else()
+    message(STATUS "NBody: CPU backend (IPPL_PLATFORMS=${IPPL_PLATFORMS})")
+  endif()
+
+  include(ExternalProject)
+  get_external_project(PROJECT_NAME "cstone" GIT_REPO
+                       "http://github.com/biddisco/cornerstone-octree" GIT_TAG "ippl")
+  add_subdirectory(extern/ryoanji)
+endif()
+
+# ------------------------------------------------------------------------------
 # GoogleTest
 # ------------------------------------------------------------------------------
 if(IPPL_ENABLE_UNIT_TESTS)
