@@ -59,6 +59,8 @@ option(IPPL_MARK_FAILING_TESTS
        OFF)
 option(IPPL_ENABLE_SCRIPTS "Generate job script templates for some benchmarks/tests" OFF)
 option(IPPL_ENABLE_BENCHMARK "Enable Google Benchmark-based benchmarks" OFF)
+option(IPPL_ENABLE_NBODY
+       "Enable the gridless N-body (Barnes-Hut) module backed by Ryoanji + cstone" OFF)
 
 
 option(IPPL_ENABLE_CATALYST "Enable ParaView Catalyst" OFF)
